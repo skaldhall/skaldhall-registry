@@ -1,0 +1,56 @@
+# NGINX Ingress error log
+sourceId: "nginx-ingress-error"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 6008
+description: "NGINX Ingress error log"
+sample: "2024/08/12 13:00:00 [error] 32#32: *1234 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.5.12, server: app.example.com, request: \"GET /api/v1/users HTTP/1.1\", upstream: \"http://10.244.1.27:8080/api/v1/users\", host: \"app.example.com\", referrer: \"https://app.example.com/\""
+vrl: |
+    # nginx-ingress error log -> OCSF 6008 Application Error
+    src = .
+    parsed = parse_regex(.message, r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>\w+)\] (?P<pid>\d+)#(?P<tid>\d+):(?:\s+\*(?P<connid>\d+))?\s+(?P<rest>.*)$') ?? {}
+
+    . = {}
+    .class_uid = 6008
+    .metadata = {"product": {"name": "nginx-ingress", "vendor_name": "Kubernetes"}, "version": "1.5.0"}
+
+    # Time
+    ts_str = string(parsed.ts) ?? ""
+    parsed_ts = null
+    if ts_str != "" {
+      pt, perr = parse_timestamp(ts_str, "%Y/%m/%d %H:%M:%S")
+      if perr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Severity from level
+    level = downcase(string(parsed.level) ?? "")
+    sev = 1
+    if level == "debug" { sev = 1 }
+    if level == "info" { sev = 1 }
+    if level == "notice" { sev = 2 }
+    if level == "warn" { sev = 3 }
+    if level == "error" { sev = 4 }
+    if level == "crit" { sev = 5 }
+    if level == "alert" { sev = 5 }
+    if level == "emerg" { sev = 6 }
+    .severity_id = sev
+    .severity = level
+
+    # Activity
+    .activity_id = 1
+
+    # Extract context from "rest"
+    rest = string(parsed.rest) ?? ""
+    .message = rest
+    .raw_data = src.message
+    .process = {"pid": to_int(parsed.pid) ?? 0}
+
+    # Try to extract client/server/request/upstream/host from rest
+    ctx = parse_key_value(rest, key_value_delimiter: ":", field_delimiter: ",", whitespace: "lenient") ?? {}
+    .connection_id = parsed.connid
+    if ctx != {} {
+      .ngx = ctx
+    }

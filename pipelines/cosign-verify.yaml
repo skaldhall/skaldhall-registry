@@ -1,0 +1,108 @@
+# Sigstore cosign verify log
+sourceId: "cosign-verify"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "Sigstore cosign verify log"
+sample: "Verification for gcr.io/distroless/base@sha256:abc1234567890fedcba1234567890abcdef1234567890abcdef1234567890ab --"
+vrl: |
+    # Cosign verify output -> OCSF 2004 Detection Finding
+    # Multiple input shapes:
+    #  - Verification banner (plain text "Verification for ...")
+    #  - JSON array of signature payloads (the verified-claims dump)
+    #  - JSON log lines from cosign cli (level/msg/image)
+    #  - Plain error lines ("Error: ..." / "main.go:62: error during ...")
+    src = .
+    parsed = {}
+    parsed_arr_first = {}
+    parsed_is_array = false
+    parsed_ok = false
+    if is_string(.message) {
+      m = string!(.message)
+      ok, err = parse_json(m)
+      if err == null {
+        parsed_ok = true
+        if is_array(ok) {
+          parsed_is_array = true
+          arr = array!(ok)
+          if length(arr) > 0 {
+            a0 = arr[0]
+            if is_object(a0) { parsed_arr_first = object!(a0) }
+          }
+        }
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    raw_msg = ""
+    if is_string(.message) { raw_msg = string!(.message) }
+
+    . = {}
+
+    .class_uid = 2004
+    .activity_id = 1
+    .metadata = {"product": {"name": "Cosign", "vendor_name": "Sigstore"}, "version": "1.5.0"}
+
+    # Time
+    ts = parsed.time
+    if ts == null { ts = parsed.ts }
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Determine status from msg/level/raw text
+    level_raw = parsed.level
+    level = ""
+    if is_string(level_raw) { level = string!(level_raw) }
+
+    m_raw = parsed.msg
+    if m_raw == null { m_raw = parsed.message }
+    m_str = ""
+    if is_string(m_raw) { m_str = string!(m_raw) }
+
+    is_error = false
+    if level == "error" { is_error = true }
+    if contains(raw_msg, "Error:") { is_error = true }
+    if contains(raw_msg, "no matching signatures") { is_error = true }
+    if contains(raw_msg, "no signatures found") { is_error = true }
+
+    sev_id = 1
+    status_id = 1
+    if is_error {
+      sev_id = 4
+      status_id = 2
+    }
+    .severity_id = sev_id
+    .status_id = status_id
+
+    # Image extraction
+    img = parsed.image
+    if img == null && parsed_is_array {
+      img = parsed_arr_first.critical.image."docker-manifest-digest"
+      if img == null { img = parsed_arr_first.critical.identity."docker-reference" }
+    }
+    .image = {"name": img}
+
+    # Cert / signing identity (keyless)
+    .signing = {
+      "certificate_identity": parsed.certificate_identity,
+      "certificate_issuer": parsed.certificate_issuer
+    }
+
+    # Cosign claim/bundle
+    if parsed_is_array {
+      .claim = parsed_arr_first.critical
+      .bundle = parsed_arr_first.optional.Bundle
+    }
+
+    .message = m_str
+    if .message == "" { .message = raw_msg }
+    .level = level
+    .parse_ok = parsed_ok
+
+    .finding_info = {
+      "title": "cosign verification",
+      "uid": img
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

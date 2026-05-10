@@ -1,0 +1,82 @@
+# kube-hunter scan findings
+sourceId: "kubehunter"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2002
+description: "kube-hunter scan findings"
+sample: "{\"nodes\":[{\"type\":\"Node/Master\",\"location\":\"10.0.0.1\"},{\"type\":\"Node\",\"location\":\"10.0.0.5\"}],\"services\":[{\"service\":\"Kubelet API\",\"location\":\"10.0.0.5:10250\",\"description\":\"The Kubelet is the main component in every Node, all pod operations goes through the kubelet\"},{\"service\":\"API Server\",\"location\":\"10.0.0.1:6443\",\"description\":\"The Kubernetes API Server. Acts as the front-end for the cluster\"},{\"service\":\"Etcd\",\"location\":\"10.0.0.1:2379\",\"description\":\"Etcd is a DB that stores cluster's dat"
+vrl: |
+    # kube-hunter scan -> OCSF 2002 Vulnerability Finding
+    # NOTE: vulnerabilities[] may have many; map first/severest + count.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2002
+    .activity_id = 1
+    .metadata = {"product": {"name": "kube-hunter", "vendor_name": "Aqua Security"}, "version": "1.5.0"}
+
+    vulns = []
+    if is_array(parsed.vulnerabilities) { vulns = array!(parsed.vulnerabilities) }
+    .count = length(vulns)
+
+    severity_rank = {"critical": 5, "high": 4, "medium": 3, "low": 2, "unknown": 1}
+    worst = {}
+    worst_rank = -1
+    for_each(vulns) -> |_idx, v| {
+      if is_object(v) {
+        vo = object!(v)
+        sv = vo.severity
+        s = ""
+        if is_string(sv) { s = downcase(string!(sv)) }
+        if s == "" { s = "unknown" }
+        r = to_int(get(severity_rank, [s]) ?? 0) ?? 0
+        if r > worst_rank { worst_rank = r; worst = vo }
+      }
+    }
+
+    sev_id = 1
+    if worst_rank > 0 { sev_id = worst_rank }
+    .severity_id = sev_id
+
+    ws_raw = worst.severity
+    ws = ""
+    if is_string(ws_raw) { ws = downcase(string!(ws_raw)) }
+    if ws == "" { ws = "unknown" }
+    .severity = ws
+
+    ts = src.timestamp
+    if ts == null { ts = now() }
+    .time = ts
+
+    .status_id = 1
+    if length(vulns) > 0 { .status_id = 2 }
+
+    .vulnerabilities = [{
+      "cve": {"uid": worst.vid, "title": worst.vulnerability, "references": [worst.avd_reference]},
+      "severity": ws,
+      "category": worst.category,
+      "description": worst.description,
+      "evidence": worst.evidence,
+      "hunter": worst.hunter,
+      "location": worst.location
+    }]
+
+    .finding_info = {
+      "title": worst.vulnerability,
+      "uid": worst.vid,
+      "src_url": worst.avd_reference
+    }
+
+    .message = worst.description
+
+    # Discovery context
+    if is_array(parsed.nodes) { .nodes = parsed.nodes }
+    if is_array(parsed.services) { .services = parsed.services }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

@@ -1,0 +1,86 @@
+# Kyverno admission webhook log
+sourceId: "kyverno-admission"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "Kyverno admission webhook log"
+sample: "{\"level\":\"info\",\"ts\":\"2024-08-12T13:00:00.123Z\",\"logger\":\"webhooks.resource.validate\",\"msg\":\"applied policy\",\"gvk\":\"v1/Pod\",\"resource\":{\"namespace\":\"prod\",\"name\":\"web-7d8f9-abc12\",\"uid\":\"11111111-2222-3333-4444-555555555555\"},\"operation\":\"CREATE\",\"policy\":\"require-labels\",\"rule\":\"check-team-label\",\"action\":\"audit\",\"result\":\"pass\",\"userInfo\":{\"username\":\"system:serviceaccount:prod:deployer\",\"groups\":[\"system:authenticated\"]}}"
+vrl: |
+    # Kyverno admission webhook log -> OCSF 6003 API Activity
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 6003
+    .metadata = {"product": {"name": "Kyverno", "vendor_name": "Kyverno"}, "version": "1.5.0"}
+
+    # Time
+    t = parsed.ts
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    # Activity & severity by action
+    action = to_string(parsed.action) ?? ""
+    .activity_id = 0
+    .severity_id = 1
+    if action == "audit"   { .activity_id = 3; .severity_id = 3 }
+    if action == "enforce" { .activity_id = 4; .severity_id = 4 }
+    if action == "mutate"  { .activity_id = 2; .severity_id = 2 }
+    if action == "allow"   { .activity_id = 1; .severity_id = 1 }
+
+    # Map operation -> api
+    op = to_string(parsed.operation) ?? ""
+    .api = {
+      "operation": op,
+      "service": {"name": "kyverno-webhook"}
+    }
+
+    # Result -> status
+    result = to_string(parsed.result) ?? ""
+    status_id = 1
+    if result == "fail" || result == "error" { status_id = 2 }
+    .status = result
+    .status_id = status_id
+
+    # Resource
+    if is_object(parsed.resource) {
+      .resource = {
+        "name": parsed.resource.name,
+        "namespace": parsed.resource.namespace,
+        "uid": parsed.resource.uid,
+        "type": parsed.gvk
+      }
+    }
+
+    # Actor
+    if is_object(parsed.userInfo) {
+      .actor = {
+        "user": {
+          "name": parsed.userInfo.username,
+          "groups": parsed.userInfo.groups
+        }
+      }
+    }
+
+    # Policy
+    .policy = {
+      "name": parsed.policy,
+      "rule": parsed.rule
+    }
+
+    m = parsed.msg
+    if m == null { m = src.message }
+    .message = m
+    .logger = parsed.logger
+    .level = parsed.level
+
+    # Carry kubernetes envelope
+    if is_object(src.kubernetes) {
+      .k8s = src.kubernetes
+    }

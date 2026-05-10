@@ -1,0 +1,110 @@
+# Trivy Operator ConfigAuditReport
+sourceId: "trivy-configaudit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2006
+description: "Trivy Operator ConfigAuditReport"
+sample: "{\"apiVersion\":\"aquasecurity.github.io/v1alpha1\",\"kind\":\"ConfigAuditReport\",\"metadata\":{\"name\":\"replicaset-nginx-6d4cf56db6\",\"namespace\":\"default\",\"creationTimestamp\":\"2024-08-12T13:00:00Z\",\"labels\":{\"trivy-operator.resource.kind\":\"ReplicaSet\",\"trivy-operator.resource.name\":\"nginx-6d4cf56db6\",\"trivy-operator.resource.namespace\":\"default\",\"plugin-config-hash\":\"7f65d98b75\",\"resource-spec-hash\":\"7cb64cb677\"}},\"report\":{\"updateTimestamp\":\"2024-08-12T13:00:00Z\",\"scanner\":{\"name\":\"Trivy\",\"vendor\":\"Aqua"
+vrl: |
+    # Trivy ConfigAuditReport CR -> OCSF 2006 Compliance Finding
+    # NOTE: report.checks[] may have many; map first failed/severest + count.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2006
+    .activity_id = 1
+    .metadata = {"product": {"name": "Trivy", "vendor_name": "Aqua Security"}, "version": "1.5.0"}
+
+    checks = []
+    if is_array(parsed.report.checks) { checks = array!(parsed.report.checks) }
+    .count = length(checks)
+
+    severity_rank = {"critical": 5, "high": 4, "medium": 3, "low": 2, "unknown": 1}
+    worst = {}
+    worst_rank = -1
+    fail_count = 0
+    for_each(checks) -> |_idx, v| {
+      if is_object(v) {
+        vo = object!(v)
+        sv = vo.severity
+        s = ""
+        if is_string(sv) { s = downcase(string!(sv)) }
+        if s == "" { s = "unknown" }
+        r = to_int(get(severity_rank, [s]) ?? 0) ?? 0
+        success = vo.success
+        if success == false {
+          fail_count = fail_count + 1
+          if r > worst_rank { worst_rank = r; worst = vo }
+        }
+      }
+    }
+
+    # If no failures, fall back to first check
+    if length(keys(worst)) == 0 && length(checks) > 0 {
+      c0 = checks[0]
+      if is_object(c0) { worst = object!(c0) }
+    }
+
+    sev_id = 1
+    if worst_rank > 0 { sev_id = worst_rank }
+    .severity_id = sev_id
+    .fail_count = fail_count
+
+    ws_raw = worst.severity
+    ws = ""
+    if is_string(ws_raw) { ws = downcase(string!(ws_raw)) }
+    if ws == "" { ws = "unknown" }
+    .severity = ws
+
+    ts = parsed.report.updateTimestamp
+    if ts == null { ts = parsed.metadata.creationTimestamp }
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    .status_id = 1
+    if fail_count > 0 { .status_id = 2 }
+
+    # message: first message string
+    msgs = worst.messages
+    mfirst = ""
+    if is_array(msgs) {
+      ma = array!(msgs)
+      if length(ma) > 0 {
+        m0 = ma[0]
+        if is_string(m0) { mfirst = string!(m0) }
+      }
+    }
+    .message = mfirst
+
+    .finding_info = {
+      "title": worst.checkID,
+      "uid": worst.checkID,
+      "types": [worst.category]
+    }
+
+    .compliance = {
+      "standards": ["trivy-config-audit"],
+      "category": worst.category,
+      "control": worst.checkID
+    }
+
+    if is_object(worst.scope) { .scope = worst.scope }
+
+    .resource = {
+      "name": parsed.metadata.name,
+      "namespace": parsed.metadata.namespace,
+      "kind": parsed.kind,
+      "labels": parsed.metadata.labels
+    }
+
+    .scanner = parsed.report.scanner
+    if is_object(parsed.report.summary) { .summary = parsed.report.summary }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

@@ -1,0 +1,106 @@
+# jsPolicy violation log
+sourceId: "jspolicy-violation"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "jsPolicy violation log"
+sample: "{\"apiVersion\":\"policy.jspolicy.com/v1beta1\",\"kind\":\"JsPolicyViolations\",\"metadata\":{\"name\":\"deny-default-namespace.company.tld\",\"creationTimestamp\":\"2024-08-12T13:00:00Z\"},\"status\":{\"violations\":[{\"action\":\"deny\",\"code\":500,\"message\":\"Namespace 'default' not allowed!\",\"reason\":\"namespace_disallowed\",\"requestInfo\":{\"operation\":\"CREATE\",\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"name\":\"nginx\",\"namespace\":\"default\"},\"userInfo\":{\"uid\":\"u-1234\",\"username\":\"admin\",\"groups\":[\"system:masters\",\"system:authenticated"
+vrl: |
+    # jsPolicy violations -> OCSF 2004 Detection Finding
+    # NOTE: status.violations[] may have multiple; map first + count.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .activity_id = 1
+    .metadata = {"product": {"name": "jsPolicy", "vendor_name": "Loft Labs"}, "version": "1.5.0"}
+
+    # Two shapes: CRD with status.violations[], or operator log with policy/action keys
+    violations = []
+    if is_array(parsed.status.violations) { violations = array!(parsed.status.violations) }
+    .count = length(violations)
+
+    first = {}
+    if length(violations) > 0 {
+      f = violations[0]
+      if is_object(f) { first = object!(f) }
+    }
+
+    # Determine action from either shape
+    action = to_string(first.action) ?? to_string(parsed.action) ?? ""
+    sev_id = 3
+    if action == "deny" { sev_id = 4 }
+    if action == "warn" { sev_id = 2 }
+    if action == "mutate" { sev_id = 2 }
+    if action == "audit" { sev_id = 3 }
+    .severity_id = sev_id
+    .action = action
+
+    # Time
+    ts = first.timestamp
+    if ts == null { ts = parsed.ts }
+    if ts == null { ts = parsed.metadata.creationTimestamp }
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Status code -> success / failure
+    code = to_int(first.code) ?? 0
+    .status_id = 1
+    if code >= 400 { .status_id = 2 }
+    .status_code = code
+
+    # Resource: from requestInfo or from log keys
+    .resource = {
+      "name": first.requestInfo.name,
+      "namespace": first.requestInfo.namespace,
+      "kind": first.requestInfo.kind,
+      "operation": first.requestInfo.operation,
+      "apiVersion": first.requestInfo.apiVersion
+    }
+    if .resource.name == null && parsed.resource_name != null {
+      .resource = {
+        "name": parsed.resource_name,
+        "namespace": parsed.resource_namespace,
+        "kind": parsed.resource_kind
+      }
+    }
+
+    # Actor
+    .actor = {
+      "user": {
+        "name": first.userInfo.username,
+        "uid": first.userInfo.uid,
+        "groups": first.userInfo.groups
+      }
+    }
+    if .actor.user.name == null && parsed.user != null {
+      .actor = {"user": {"name": parsed.user}}
+    }
+
+    # Policy
+    pname = parsed.metadata.name
+    if pname == null { pname = parsed.policy }
+    .policy = {
+      "name": pname,
+      "reason": first.reason
+    }
+    if .policy.reason == null { .policy = {"name": pname, "reason": parsed.reason} }
+
+    m = first.message
+    if m == null { m = parsed.message }
+    if m == null { m = parsed.msg }
+    .message = m
+
+    .finding_info = {
+      "title": pname,
+      "uid": parsed.metadata.name
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

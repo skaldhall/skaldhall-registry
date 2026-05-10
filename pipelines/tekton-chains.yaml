@@ -1,0 +1,87 @@
+# Tekton Chains attestation events
+sourceId: "tekton-chains"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6002
+description: "Tekton Chains attestation events"
+sample: "{\"level\":\"info\",\"ts\":\"2024-08-12T13:00:00.123Z\",\"logger\":\"tekton-chains\",\"caller\":\"signing/signing.go:142\",\"msg\":\"Signing TaskRun\",\"taskrun\":\"default/build-image-abcde\",\"uid\":\"11111111-2222-3333-4444-555555555555\"}"
+vrl: |
+    # Tekton Chains -> OCSF 6002 Application Lifecycle (signed lifecycle event)
+    # Two shapes: zap-style operator log lines, and an in-toto/SLSA Statement.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 6002
+    .activity_id = 1
+    .metadata = {"product": {"name": "Tekton Chains", "vendor_name": "Tekton"}, "version": "1.5.0"}
+
+    # Time
+    ts = parsed.ts
+    if ts == null { ts = parsed.metadata.buildFinishedOn }
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Severity by level
+    level_raw = parsed.level
+    level = ""
+    if is_string(level_raw) { level = string!(level_raw) }
+    sev_id = 1
+    status_id = 1
+    if level == "error" { sev_id = 4; status_id = 2 }
+    if level == "warn" { sev_id = 3 }
+    .severity_id = sev_id
+    .status_id = status_id
+    .level = level
+
+    # Detect statement (in-toto)
+    is_statement = false
+    if parsed."_type" == "https://in-toto.io/Statement/v1" { is_statement = true }
+    if is_string(parsed.predicateType) { is_statement = true }
+    .statement = is_statement
+
+    if is_statement {
+      .attestation = {
+        "predicate_type": parsed.predicateType,
+        "subjects": parsed.subject,
+        "builder_id": parsed.predicate.builder.id,
+        "build_type": parsed.predicate.buildType,
+        "build_started_on": parsed.predicate.metadata.buildStartedOn,
+        "build_finished_on": parsed.predicate.metadata.buildFinishedOn,
+        "materials": parsed.predicate.materials,
+        "invocation": parsed.predicate.invocation
+      }
+    } else {
+      .signing = {
+        "taskrun": parsed.taskrun,
+        "pipelinerun": parsed.pipelinerun,
+        "uid": parsed.uid,
+        "image": parsed.image,
+        "payload_type": parsed.payload_type,
+        "rekor_uuid": parsed.uuid,
+        "rekor_log_index": parsed.logIndex,
+        "format": parsed.format,
+        "backend": parsed.backend,
+        "error": parsed.error
+      }
+    }
+
+    m_raw = parsed.msg
+    m_str = ""
+    if is_string(m_raw) { m_str = string!(m_raw) }
+    .message = m_str
+    .logger = parsed.logger
+    .caller = parsed.caller
+
+    .finding_info = {
+      "title": m_str,
+      "uid": parsed.uid
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

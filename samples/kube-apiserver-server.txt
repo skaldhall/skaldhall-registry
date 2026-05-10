@@ -1,0 +1,10 @@
+# source: https://github.com/kubernetes/klog — klog native format used by kube-apiserver
+I0512 10:31:50.378204       1 server.go:553] "Starting Kubernetes API Server" version="v1.28.3"
+I0512 10:31:50.379112       1 secure_serving.go:213] Serving securely on [::]:6443
+I0512 10:31:51.123456       1 trace.go:236] Trace[123456789]: "Get" url:/api/v1/namespaces/default/pods/web-1,user-agent:kubectl/v1.28.3 (linux/amd64) kubernetes/a8a1abc,audit-id:abcd-1234,client:10.0.0.5,verb:GET (12-May-2024 10:31:51.000) (total time: 123ms):
+W0512 10:32:00.501123       1 watcher.go:222] watch chan error: etcdserver: mvcc: required revision has been compacted
+E0512 10:32:05.654321       1 status.go:71] apiserver received an error that is not an metav1.Status: &errors.errorString{s:"context canceled"}
+I0512 10:32:10.789456       1 controller.go:621] quota admission added evaluator for: deployments.apps
+I0512 10:32:15.987654       1 httplog.go:131] "HTTP" verb="POST" URI="/api/v1/namespaces/default/pods" latency="45.123ms" userAgent="kubectl/v1.28.3" srcIP="10.0.0.5:42118" resp=201
+E0512 10:33:00.111222       1 authentication.go:73] "Unable to authenticate the request" err="invalid bearer token"
+I0512 10:34:00.222333       1 audit.go:174] "Audit event" auditID="deadbeef-cafe" stage="ResponseComplete" requestURI="/api/v1/pods" verb="list" user="system:serviceaccount:default:default" sourceIPs=["10.0.0.5"]

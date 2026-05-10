@@ -1,0 +1,101 @@
+# Linux kernel AppArmor audit
+sourceId: "apparmor"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "kv"
+ocsfClass: 1001
+description: "Linux kernel AppArmor audit"
+sample: "audit: type=1400 audit(1723460400.123:42): apparmor=\"DENIED\" operation=\"open\" profile=\"/usr/sbin/cupsd\" name=\"/etc/shadow\" pid=1234 comm=\"cupsd\" requested_mask=\"r\" denied_mask=\"r\" fsuid=0 ouid=0"
+vrl: |
+    # AppArmor LSM kernel audit -> OCSF 1001 File Activity (mostly file/exec/cap denials)
+    src = .
+    raw = string(.message) ?? ""
+
+    # Strip kernel/audit prefix: "audit: type=1400 audit(epoch:seq):" then rest
+    header = parse_regex(raw, r'(?:kernel:\s*)?(?:audit:\s*)?type=(?P<type>\S+)\s+audit\((?P<epoch>\d+\.\d+):(?P<seq>\d+)\):\s*(?P<rest>.*)$') ?? {}
+    rest = string(header.rest) ?? ""
+
+    # Time from epoch
+    epoch_str = string(header.epoch) ?? ""
+    parsed_ts = null
+    if epoch_str != "" {
+      ef = to_float(epoch_str) ?? 0.0
+      pt, terr = from_unix_timestamp(to_int(ef * 1000000.0), unit: "microseconds")
+      if terr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+
+    # AppArmor lines are k=v with quoted values
+    kv = parse_key_value(rest, key_value_delimiter: "=", field_delimiter: " ", whitespace: "lenient") ?? {}
+
+    . = {}
+    .metadata = {"product": {"name": "AppArmor", "vendor_name": "Canonical"}, "version": "1.5.0"}
+    .time = parsed_ts
+
+    aa_state = string(kv.apparmor) ?? ""
+    op = string(kv.operation) ?? ""
+
+    # Class & activity
+    class_uid = 1001  # File Activity default
+    activity_id = 1
+    if op == "open" || op == "read" { activity_id = 2 }
+    if op == "write" || op == "rename" || op == "mknod" { activity_id = 3 }
+    if op == "unlink" { activity_id = 4 }
+    if op == "exec" { class_uid = 1007; activity_id = 1 }   # Process Activity
+    if op == "ptrace" { class_uid = 1007; activity_id = 4 }
+    if op == "capable" { class_uid = 1007; activity_id = 1 }
+    if op == "connect" { class_uid = 4001; activity_id = 1 }   # Network
+    if op == "profile_load" { class_uid = 6002; activity_id = 1 }  # Module Activity-ish
+    .class_uid = class_uid
+    .activity_id = activity_id
+
+    # Severity - DENIED is bad, ALLOWED informational
+    sev = 1
+    if aa_state == "DENIED" { sev = 4 }
+    if aa_state == "ALLOWED" { sev = 1 }
+    if aa_state == "STATUS" { sev = 1 }
+    .severity_id = sev
+    .status = aa_state
+    status_id = 1
+    if aa_state == "DENIED" { status_id = 2 }
+    .status_id = status_id
+
+    # File
+    .file = {
+      "path": kv.name,
+      "name": kv.name
+    }
+
+    # Process
+    .process = {
+      "pid": to_int(kv.pid) ?? 0,
+      "name": kv.comm
+    }
+
+    # Actor user
+    .actor = {
+      "user": {
+        "uid": to_int(kv.fsuid) ?? null
+      }
+    }
+
+    # AppArmor specifics
+    .apparmor = {
+      "state": aa_state,
+      "operation": op,
+      "profile": kv.profile,
+      "target": kv.target,
+      "requested_mask": kv.requested_mask,
+      "denied_mask": kv.denied_mask,
+      "capability": kv.capability,
+      "capname": kv.capname,
+      "peer": kv.peer,
+      "family": kv.family,
+      "sock_type": kv.sock_type,
+      "protocol": kv.protocol,
+      "addr": kv.addr,
+      "port": kv.port,
+      "event_id": header.seq
+    }
+
+    .raw_data = raw

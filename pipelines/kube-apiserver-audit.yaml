@@ -1,0 +1,109 @@
+# Kubernetes apiserver AdvancedAudit log
+sourceId: "kube-apiserver-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "Kubernetes apiserver AdvancedAudit log"
+sample: "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"12345678-1234-1234-1234-123456789012\",\"stage\":\"RequestReceived\",\"requestURI\":\"/api/v1/namespaces/default/pods/my-pod\",\"verb\":\"get\",\"user\":{\"username\":\"admin\",\"uid\":\"1000\",\"groups\":[\"system:masters\",\"system:authenticated\"]},\"sourceIPs\":[\"192.168.1.100\"],\"userAgent\":\"kubectl/v1.28.0 (linux/amd64) kubernetes/9b2bf3c\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"default\",\"name\":\"my-pod\",\"apiVersion\":\"v1\"},\"requestReceivedTim"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    verb = downcase(to_string(parsed.verb) ?? "")
+    activity = 0
+    if verb == "get" || verb == "list" || verb == "watch" { activity = 2 }
+    if verb == "create" { activity = 1 }
+    if verb == "update" || verb == "patch" { activity = 3 }
+    if verb == "delete" || verb == "deletecollection" { activity = 4 }
+
+    # Severity from response code
+    user_obj = {}
+    if is_object(parsed.user) { user_obj = object!(parsed.user) }
+
+    resp_status = {}
+    if is_object(parsed.responseStatus) { resp_status = object!(parsed.responseStatus) }
+
+    code = to_int(resp_status.code) ?? 0
+    sev = 1
+    if code >= 500 { sev = 4 }
+    if code >= 400 && code < 500 { sev = 3 }
+    if code >= 200 && code < 400 { sev = 1 }
+
+    .class_uid = 6003
+    .activity_id = activity
+    .severity_id = sev
+
+    t_str = to_string(parsed.stageTimestamp) ?? ""
+    if t_str == "" { t_str = to_string(parsed.requestReceivedTimestamp) ?? "" }
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    audit_id = to_string(parsed.auditID) ?? ""
+    .metadata = {
+      "product": {"name": "kube-apiserver", "vendor_name": "Kubernetes"},
+      "version": "1.5.0",
+      "uid": audit_id
+    }
+
+    .api = {
+      "operation": verb,
+      "service": {"name": parsed.requestURI},
+      "version": parsed.apiVersion
+    }
+
+    src_ips = []
+    if is_array(parsed.sourceIPs) { src_ips = array!(parsed.sourceIPs) }
+    src_ip = ""
+    if length(src_ips) > 0 {
+      src_ip = to_string(src_ips[0]) ?? ""
+    }
+
+    .src_endpoint = {"ip": src_ip}
+
+    .actor = {
+      "user": {
+        "name": user_obj.username,
+        "uid": user_obj.uid,
+        "groups": user_obj.groups
+      }
+    }
+
+    .http_request = {
+      "url": {"path": parsed.requestURI},
+      "user_agent": parsed.userAgent
+    }
+
+    .http_response = {
+      "status_code": code,
+      "status": resp_status.status,
+      "message": resp_status.message,
+      "reason": resp_status.reason
+    }
+
+    obj_ref = {}
+    if is_object(parsed.objectRef) { obj_ref = object!(parsed.objectRef) }
+
+    .resource = {
+      "type": obj_ref.resource,
+      "namespace": obj_ref.namespace,
+      "name": obj_ref.name,
+      "api_group": obj_ref.apiGroup,
+      "api_version": obj_ref.apiVersion
+    }
+
+    .audit_id = audit_id
+    .audit_level = parsed.level
+    .stage = parsed.stage
+    .annotations = parsed.annotations
+    .request_object = parsed.requestObject
+    .request_received_at = parsed.requestReceivedTimestamp
+    .stage_timestamp = parsed.stageTimestamp
+    .raw_data = parsed

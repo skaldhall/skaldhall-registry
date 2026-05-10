@@ -1,0 +1,129 @@
+# Aqua Tracee syscall/eBPF events
+sourceId: "tracee"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 1007
+description: "Aqua Tracee syscall/eBPF events"
+sample: "{\"timestamp\":1657295236470126167,\"threadStartTime\":1657295236469000000,\"processorId\":0,\"processId\":2578324,\"cgroupId\":1234567,\"threadId\":2578324,\"parentProcessId\":2578300,\"hostProcessId\":2578324,\"hostThreadId\":2578324,\"hostParentProcessId\":2578300,\"userId\":1000,\"mountNamespace\":4026531840,\"pidNamespace\":4026531836,\"processName\":\"exa\",\"executable\":{\"path\":\"/usr/bin/exa\"},\"hostName\":\"fujitsu\",\"containerId\":\"\",\"container\":{},\"kubernetes\":{},\"eventId\":\"707\",\"eventName\":\"sched_process_exec\",\"argsNum\""
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    evt_name = to_string(parsed.eventName) ?? ""
+
+    # Default class: process activity
+    class_uid = 1007
+    activity = 1
+
+    # Branching: if openat/open/file_modification/security_file_open → 1001 File
+    if evt_name == "openat" || evt_name == "open" || evt_name == "file_modification" || evt_name == "security_file_open" {
+      class_uid = 1001
+      activity = 6
+    }
+    if evt_name == "security_socket_connect" || evt_name == "connect" || evt_name == "socket_connect" {
+      class_uid = 4001
+      activity = 6
+    }
+    if evt_name == "execve" || evt_name == "sched_process_exec" {
+      class_uid = 1007
+      activity = 1
+    }
+    if evt_name == "exit" || evt_name == "sched_process_exit" {
+      class_uid = 1007
+      activity = 2
+    }
+
+    .class_uid = class_uid
+    .activity_id = activity
+    .severity_id = 1
+
+    # timestamp is nanoseconds epoch
+    ts_ns = to_int(parsed.timestamp) ?? 0
+    ts = now()
+    if ts_ns > 0 {
+      ts_sec = to_int(ts_ns / 1000000000)
+      ts = from_unix_timestamp(ts_sec) ?? now()
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "Tracee", "vendor_name": "Aqua Security"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.eventId) ?? ""
+    }
+
+    executable = {}
+    if is_object(parsed.executable) { executable = object!(parsed.executable) }
+
+    container = {}
+    if is_object(parsed.container) { container = object!(parsed.container) }
+
+    kubernetes = {}
+    if is_object(parsed.kubernetes) { kubernetes = object!(parsed.kubernetes) }
+
+    # Extract argv if present
+    args_arr = []
+    arg_list = []
+    if is_array(parsed.args) { arg_list = array!(parsed.args) }
+    for_each(arg_list) -> |_i, a| {
+      if is_object(a) {
+        ao = object!(a)
+        n = to_string(ao.name) ?? ""
+        if n == "argv" {
+          if is_array(ao.value) { args_arr = array!(ao.value) }
+        }
+      }
+    }
+
+    cmd_line = ""
+    if length(args_arr) > 0 {
+      cmd_line = join(args_arr, " ") ?? ""
+    }
+
+    .process = {
+      "pid": parsed.processId,
+      "tid": parsed.threadId,
+      "name": parsed.processName,
+      "uid": parsed.userId,
+      "command_line": cmd_line,
+      "file": {"path": executable.path},
+      "image": {"file": {"path": executable.path}},
+      "parent": {
+        "pid": parsed.parentProcessId
+      },
+      "host_pid": parsed.hostProcessId,
+      "host_tid": parsed.hostThreadId,
+      "host_parent_pid": parsed.hostParentProcessId,
+      "cgroup_id": parsed.cgroupId,
+      "mount_namespace": parsed.mountNamespace,
+      "pid_namespace": parsed.pidNamespace
+    }
+
+    .event_name = evt_name
+    .event_id = parsed.eventId
+    .syscall = parsed.syscall
+    .return_value = parsed.returnValue
+    .args = parsed.args
+
+    .device = {"hostname": parsed.hostName}
+
+    .k8s = {
+      "namespace": kubernetes.podNamespace,
+      "pod": kubernetes.podName,
+      "pod_uid": kubernetes.podUID,
+      "container": {
+        "id": container.id,
+        "name": container.name,
+        "image": container.image
+      }
+    }
+
+    .raw_data = parsed

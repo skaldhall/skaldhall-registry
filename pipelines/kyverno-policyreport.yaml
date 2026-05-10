@@ -1,0 +1,103 @@
+# Kyverno PolicyReport rows
+sourceId: "kyverno-policyreport"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "Kyverno PolicyReport rows"
+sample: "{\"apiVersion\":\"wgpolicyk8s.io/v1alpha2\",\"kind\":\"PolicyReport\",\"metadata\":{\"name\":\"cpol-disallow-privileged-containers\",\"namespace\":\"prod\",\"uid\":\"0ec04a57-4c3d-492d-9278-951cd1929fe3\",\"creationTimestamp\":\"2024-08-12T13:00:00Z\",\"labels\":{\"app.kubernetes.io/managed-by\":\"kyverno\"}},\"results\":[{\"category\":\"Pod Security Standards (Baseline)\",\"message\":\"validation rule 'privileged-containers' passed.\",\"policy\":\"disallow-privileged-containers\",\"result\":\"pass\",\"rule\":\"privileged-containers\",\"scored\":true"
+vrl: |
+    # Kyverno PolicyReport -> OCSF 2004 Detection Finding
+    # NOTE: results[] may have multiple entries; we map the first/severest one
+    # and stash .count = length(results). One input -> one output.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .activity_id = 1
+    .metadata = {"product": {"name": "Kyverno", "vendor_name": "Kyverno"}, "version": "1.5.0"}
+
+    # Pick first result
+    results = []
+    if is_array(parsed.results) { results = array!(parsed.results) }
+    .count = length(results)
+
+    first = {}
+    if length(results) > 0 {
+      f = results[0]
+      if is_object(f) { first = object!(f) }
+    }
+
+    # Severity mapping
+    sev_raw = to_string(first.severity) ?? ""
+    sev = downcase(sev_raw)
+    sev_id = 1
+    if sev == "critical" { sev_id = 5 }
+    if sev == "high" { sev_id = 4 }
+    if sev == "medium" { sev_id = 3 }
+    if sev == "low" { sev_id = 2 }
+    if sev == "info" || sev == "informational" { sev_id = 1 }
+    .severity_id = sev_id
+    .severity = sev
+
+    # Time: prefer first.timestamp.seconds if present, else metadata.creationTimestamp
+    t_assigned = false
+    ts_secs = first.timestamp.seconds
+    if ts_secs != null {
+      ti = to_int(ts_secs) ?? 0
+      t, e = from_unix_timestamp(ti, unit: "seconds")
+      if e == null { .time = t; t_assigned = true }
+    }
+    if !t_assigned {
+      ct = parsed.metadata.creationTimestamp
+      if ct != null { .time = ct } else { .time = src.timestamp }
+    }
+    if .time == null { .time = now() }
+
+    # Finding info
+    .finding_info = {
+      "title": first.policy,
+      "uid": parsed.metadata.uid,
+      "types": [first.category]
+    }
+    .message = first.message
+
+    # Status
+    res = to_string(first.result) ?? ""
+    .status = res
+    .status_id = 1
+    if res == "fail" || res == "error" { .status_id = 2 }
+
+    # Policy / rule
+    .policy = {
+      "name": first.policy,
+      "rule": first.rule,
+      "category": first.category
+    }
+
+    # Resource (scope)
+    if is_object(parsed.scope) {
+      .resource = {
+        "name": parsed.scope.name,
+        "namespace": parsed.scope.namespace,
+        "uid": parsed.scope.uid,
+        "type": parsed.scope.kind
+      }
+    }
+
+    # Summary
+    if is_object(parsed.summary) { .summary = parsed.summary }
+
+    # Report identity
+    .report = {
+      "name": parsed.metadata.name,
+      "namespace": parsed.metadata.namespace,
+      "kind": parsed.kind
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

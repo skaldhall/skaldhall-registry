@@ -1,0 +1,98 @@
+# Traefik access log JSON
+sourceId: "traefik-access"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4002
+description: "Traefik access log JSON"
+sample: "{\"ClientAddr\":\"10.0.5.12:51220\",\"ClientHost\":\"10.0.5.12\",\"ClientPort\":\"51220\",\"ClientUsername\":\"-\",\"DownstreamContentSize\":1234,\"DownstreamStatus\":200,\"Duration\":11000000,\"OriginContentSize\":1234,\"OriginDuration\":10000000,\"OriginStatus\":200,\"Overhead\":1000000,\"RequestAddr\":\"app.example.com\",\"RequestContentSize\":0,\"RequestCount\":1,\"RequestHost\":\"app.example.com\",\"RequestMethod\":\"GET\",\"RequestPath\":\"/api/v1/users\",\"RequestPort\":\"-\",\"RequestProtocol\":\"HTTP/1.1\",\"RequestScheme\":\"https\",\"RetryAttempt"
+vrl: |
+    # Traefik access log (JSON) -> OCSF 4002 HTTP Activity
+    src = .
+    parsed = parse_json(string(.message) ?? "") ?? {}
+
+    . = {}
+    .class_uid = 4002
+    .metadata = {"product": {"name": "Traefik", "vendor_name": "Traefik Labs"}, "version": "1.5.0"}
+
+    # Time
+    parsed_ts = null
+    ts_str = string(parsed.StartUTC) ?? ""
+    if ts_str == "" { ts_str = string(parsed.time) ?? "" }
+    if ts_str != "" {
+      pt, perr = parse_timestamp(ts_str, "%+")
+      if perr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Method -> activity_id
+    method = upcase(string(parsed.RequestMethod) ?? "")
+    .activity_id = 0
+    if method == "GET"     { .activity_id = 1 }
+    if method == "HEAD"    { .activity_id = 2 }
+    if method == "POST"    { .activity_id = 3 }
+    if method == "PUT"     { .activity_id = 4 }
+    if method == "DELETE"  { .activity_id = 5 }
+    if method == "TRACE"   { .activity_id = 6 }
+    if method == "CONNECT" { .activity_id = 7 }
+    if method == "OPTIONS" { .activity_id = 8 }
+    if method == "PATCH"   { .activity_id = 9 }
+
+    # Status -> severity
+    status_int = to_int(parsed.DownstreamStatus) ?? 0
+    sev = 1
+    if status_int >= 400 && status_int < 500 { sev = 3 }
+    if status_int >= 500 { sev = 4 }
+    .severity_id = sev
+    .status_code = status_int
+
+    # HTTP request
+    .http_request = {
+      "http_method": method,
+      "url": {
+        "path": parsed.RequestPath,
+        "scheme": parsed.RequestScheme,
+        "hostname": parsed.RequestHost
+      },
+      "user_agent": parsed."request_User-Agent",
+      "version": parsed.RequestProtocol
+    }
+
+    # Source endpoint
+    client_port = to_int(parsed.ClientPort) ?? 0
+    .src_endpoint = {
+      "ip": parsed.ClientHost,
+      "port": client_port
+    }
+
+    # Destination
+    .dst_endpoint = {
+      "ip": parsed.ServiceAddr,
+      "name": parsed.ServiceName
+    }
+
+    # User
+    user_str = string(parsed.ClientUsername) ?? ""
+    if user_str != "-" && user_str != "" {
+      .actor = {"user": {"name": user_str}}
+    }
+
+    # Response
+    resp_size = to_int(parsed.DownstreamContentSize) ?? 0
+    .http_response = {
+      "code": status_int,
+      "length": resp_size
+    }
+
+    # Traefik extras
+    duration_ns = to_int(parsed.Duration) ?? 0
+    .duration = duration_ns
+    .router = parsed.RouterName
+    .entrypoint = parsed.entryPointName
+    .tls = {
+      "version": parsed.TLSVersion,
+      "cipher": parsed.TLSCipher
+    }
+    .retry_attempts = to_int(parsed.RetryAttempts) ?? 0
+    .raw_data = src.message

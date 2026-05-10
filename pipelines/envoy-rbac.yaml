@@ -1,0 +1,108 @@
+# Envoy ext_authz / RBAC filter log
+sourceId: "envoy-rbac"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 3005
+description: "Envoy ext_authz / RBAC filter log"
+sample: "[2024-08-12T11:00:00.123Z][12][debug][rbac] [source/extensions/filters/http/rbac/rbac_filter.cc:120] enforced denied, matched policy ns[default]-policy[deny-default]-rule[0]"
+vrl: |
+    # Envoy RBAC / ext_authz logs -> OCSF 3005 Authorization
+    src = .
+    parsed = {}
+    is_json = false
+    if is_string(.message) {
+      msg_str = string!(.message)
+      ok, err = parse_json(msg_str)
+      if err == null && is_object(ok) {
+        parsed = object!(ok)
+        is_json = true
+      }
+    }
+
+    . = {}
+
+    .class_uid = 3005
+    .metadata = {"product": {"name": "Envoy", "vendor_name": "Envoy", "feature": {"name": "rbac"}}, "version": "1.5.0"}
+
+    ts = null
+    .activity_id = 0
+    .severity_id = 1
+
+    if is_json {
+      ts = parsed.start_time
+      status = parsed.response_code
+      details = to_string(parsed.response_code_details) ?? ""
+      s, _ = to_int(status)
+      if s == null { s = 0 }
+      if s == 403 || s >= 400 { .activity_id = 3; .severity_id = 3 }
+      if s >= 200 && s < 400 { .activity_id = 2; .severity_id = 1 }
+
+      .http_request = {
+        "method": parsed.method,
+        "url": {"path": parsed.path, "hostname": parsed.authority},
+        "version": parsed.protocol,
+        "user_agent": parsed.user_agent,
+        "uid": parsed.request_id
+      }
+      .http_response = {"status_code": status, "details": details}
+      .src_endpoint = {"ip": parsed.x_forwarded_for, "downstream_remote": parsed.downstream_remote_address}
+      .dst_endpoint = {"downstream_local": parsed.downstream_local_address, "upstream_cluster": parsed.upstream_cluster, "authority": parsed.authority}
+      .response_flags = parsed.response_flags
+      .dur_ms = parsed.duration
+      .status = "deny"
+      .status_id = 2
+      if .activity_id == 2 { .status = "allow"; .status_id = 1 }
+    } else {
+      raw = to_string(src.message) ?? ""
+      m, e = parse_regex(raw, r'^\[(?P<ts>[^\]]+)\]\[(?P<thr>\d+)\]\[(?P<lvl>\w+)\]\[(?P<filter>\w+)\] \[(?P<file>[^\]]+)\] (?P<msg>.*)$')
+      decision = ""
+      policy_ns = ""
+      policy_name = ""
+      policy_rule = ""
+      msg = raw
+      filter_kind = ""
+      if e == null {
+        parsed_ts, terr = parse_timestamp(m.ts, "%+")
+        if terr == null { ts = parsed_ts }
+        msg = m.msg
+        filter_kind = m.filter
+      }
+
+      pm, perr = parse_regex(msg, r'(?P<dec>enforced denied|enforced allowed|shadow denied|shadow allowed|rejected the request|finished with status: OK)')
+      if perr == null { decision = pm.dec }
+
+      pol, polerr = parse_regex(msg, r'ns\[(?P<ns>[^\]]+)\]-policy\[(?P<name>[^\]]+)\]-rule\[(?P<rule>[^\]]+)\]')
+      if polerr == null {
+        policy_ns = pol.ns
+        policy_name = pol.name
+        policy_rule = pol.rule
+      }
+
+      if decision == "enforced denied" || decision == "rejected the request" || decision == "shadow denied" {
+        .activity_id = 3
+        .severity_id = 3
+        .status = "deny"
+        .status_id = 2
+      } else if decision == "enforced allowed" || decision == "shadow allowed" || decision == "finished with status: OK" {
+        .activity_id = 2
+        .severity_id = 1
+        .status = "allow"
+        .status_id = 1
+      } else {
+        .activity_id = 0
+        .severity_id = 1
+        .status = "unknown"
+        .status_id = 0
+      }
+
+      .filter = filter_kind
+      .decision = decision
+      .policy = {"namespace": policy_ns, "name": policy_name, "rule": policy_rule}
+      .raw = raw
+    }
+
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    .message = src.message

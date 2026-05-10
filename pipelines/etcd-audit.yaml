@@ -1,0 +1,102 @@
+# etcd request audit log (zap JSON)
+sourceId: "etcd-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "etcd request audit log (zap JSON)"
+sample: "{\"level\":\"info\",\"ts\":\"2023-12-21T21:23:07.769640Z\",\"caller\":\"etcdserver/server.go:837\",\"msg\":\"starting etcd server\",\"local-member-id\":\"f98dc20bce6225a0\",\"local-server-version\":\"3.5.10\",\"cluster-version\":\"3.5\"}"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    # activity_id: by method
+    method = to_string(parsed.method) ?? ""
+    activity = 0
+    if contains(method, "Range") || contains(method, "Watch") { activity = 2 }
+    if contains(method, "Put") { activity = 3 }
+    if contains(method, "DeleteRange") || contains(method, "Delete") { activity = 4 }
+
+    # Severity from level
+    lvl = downcase(to_string(parsed.level) ?? "info")
+    sev = 1
+    if lvl == "debug" { sev = 0 }
+    if lvl == "info" { sev = 1 }
+    if lvl == "warn" || lvl == "warning" { sev = 3 }
+    if lvl == "error" { sev = 4 }
+    if lvl == "fatal" || lvl == "panic" { sev = 5 }
+
+    .class_uid = 6003
+    .activity_id = activity
+    .severity_id = sev
+
+    t_str = to_string(parsed.ts) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "etcd", "vendor_name": "etcd"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.caller) ?? ""
+    }
+
+    .api = {
+      "operation": method,
+      "service": {"name": method}
+    }
+
+    # parse peer ip:port
+    peer_str = to_string(parsed.peer) ?? ""
+    peer_ip = ""
+    if peer_str != "" {
+      peer_parts = split(peer_str, ":")
+      if length(peer_parts) > 0 {
+        peer_ip = to_string(peer_parts[0])
+      }
+    }
+    .src_endpoint = {"ip": peer_ip, "address": peer_str}
+
+    .actor = {
+      "user": {"name": parsed.user}
+    }
+
+    .message = parsed.msg
+    .caller = parsed.caller
+    .level = parsed.level
+    .method = method
+    .peer = parsed.peer
+    .key = parsed.key
+    .range_end = parsed.range_end
+    .value_size = parsed."value-size"
+    .took = parsed.took
+    .expected_duration = parsed."expected-duration"
+    .prefix = parsed.prefix
+    .request = parsed.request
+    .response = parsed.response
+    .error = parsed.error
+    .local_member_id = parsed."local-member-id"
+    .local_server_version = parsed."local-server-version"
+    .cluster_version = parsed."cluster-version"
+    .cluster_id = parsed."cluster-id"
+    .from = parsed.from
+    .to = parsed.to
+    .start_time = parsed."start time"
+    .time_spent = parsed."time spent"
+    .remote = parsed.remote
+    .response_type = parsed."response type"
+    .request_count = parsed."request count"
+    .request_size = parsed."request size"
+    .response_count = parsed."response count"
+    .response_size = parsed."response size"
+    .request_content = parsed."request content"
+    .limit = parsed.limit
+    .keys_only = parsed.keys_only
+    .count_only = parsed.count_only
+    .raw_data = parsed

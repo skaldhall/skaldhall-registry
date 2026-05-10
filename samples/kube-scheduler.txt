@@ -1,0 +1,10 @@
+# source: https://github.com/kubernetes/klog — kube-scheduler uses klog native format
+I0512 12:00:01.123456       1 scheduler.go:604] "Successfully bound pod to node" pod="default/web-1" node="node-2" evaluatedNodes=3 feasibleNodes=2
+I0512 12:00:02.234567       1 scheduler.go:715] "Attempting to schedule pod" pod="default/web-1"
+I0512 12:00:03.345678       1 default_binder.go:53] "Attempting to bind pod to node" pod="default/web-1" node="node-2"
+W0512 12:01:00.456789       1 dispatcher.go:165] Failed to handle event "Pod" with err="object is being deleted"
+E0512 12:02:00.567890       1 schedule_one.go:961] "Error scheduling pod; retrying" err="0/3 nodes are available: 1 Insufficient memory, 2 node(s) didn't match Pod's node affinity/selector." pod="default/web-2"
+I0512 12:03:00.678901       1 factory.go:431] "Unable to schedule pod; no fit; waiting" pod="default/web-2" err="0/3 nodes are available: 3 Insufficient cpu."
+I0512 12:04:00.789012       1 eventhandlers.go:118] "Add event for unscheduled pod" pod="default/web-3"
+I0512 12:05:00.890123       1 framework.go:1271] "Plugins on filter extension point" plugin="NodeUnschedulable"
+I0512 12:06:00.901234       1 scheduling_queue.go:914] "About to try and schedule pod" pod="default/web-4"

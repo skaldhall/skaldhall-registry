@@ -1,0 +1,168 @@
+# Suricata eve.json (alert/dns/http/flow/...)
+sourceId: "suricata-eve"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4001
+description: "Suricata eve.json (alert/dns/http/flow/...)"
+sample: "{\"timestamp\":\"2017-04-07T22:24:37.251547+0100\",\"flow_id\":586497171462735,\"pcap_cnt\":53381,\"event_type\":\"alert\",\"src_ip\":\"192.168.2.14\",\"src_port\":50096,\"dest_ip\":\"209.53.113.5\",\"dest_port\":80,\"proto\":\"TCP\",\"metadata\":{\"flowbits\":[\"http.dottedquadhost\"]},\"tx_id\":4,\"alert\":{\"action\":\"allowed\",\"gid\":1,\"signature_id\":2018358,\"rev\":10,\"signature\":\"ET HUNTING GENERIC SUSPICIOUS POST to Dotted Quad with Fake Browser 1\",\"category\":\"Potentially Bad Traffic\",\"severity\":2},\"app_proto\":\"http\"}"
+vrl: |
+    # Suricata EVE -> OCSF (multi-class branch)
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .metadata = {"product": {"name": "Suricata", "vendor_name": "OISF"}, "version": "1.5.0"}
+
+    t = parsed.timestamp
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    et = to_string(parsed.event_type) ?? ""
+    .event_type = et
+
+    # Default class/activity/severity
+    .class_uid = 4001
+    .activity_id = 0
+    .severity_id = 1
+
+    # Common net 5-tuple
+    src_ep = {
+      "ip": parsed.src_ip,
+      "port": parsed.src_port
+    }
+    dst_ep = {
+      "ip": parsed.dest_ip,
+      "port": parsed.dest_port
+    }
+    proto = to_string(parsed.proto) ?? ""
+    proto_lc = downcase(proto)
+    .connection_info = {"protocol_name": proto_lc}
+
+    if et == "alert" {
+      .class_uid = 2004
+      .activity_id = 1
+      alert = {}
+      if is_object(parsed.alert) { alert = object!(parsed.alert) }
+      asev = alert.severity
+      if asev == 1 { .severity_id = 5 }
+      if asev == 2 { .severity_id = 4 }
+      if asev == 3 { .severity_id = 3 }
+      if asev == null { .severity_id = 3 }
+      .finding = {
+        "title": alert.signature,
+        "uid": alert.signature_id,
+        "rev": alert.rev,
+        "category": alert.category,
+        "action": alert.action,
+        "severity": alert.severity,
+        "metadata": alert.metadata
+      }
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    } else if et == "dns" {
+      .class_uid = 4003
+      dns = {}
+      if is_object(parsed.dns) { dns = object!(parsed.dns) }
+      dt = to_string(dns.type) ?? ""
+      if dt == "query"  { .activity_id = 1 }
+      if dt == "answer" { .activity_id = 2 }
+      rcode = to_string(dns.rcode) ?? ""
+      if rcode == "SERVFAIL" || rcode == "REFUSED" { .severity_id = 3 }
+      .dns = {
+        "id": dns.id,
+        "type": dns.type,
+        "question": {"name": dns.rrname, "type": dns.rrtype},
+        "response": {"rcode": dns.rcode, "answers": dns.answers, "grouped": dns.grouped, "flags": dns.flags}
+      }
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    } else if et == "http" {
+      .class_uid = 4002
+      http = {}
+      if is_object(parsed.http) { http = object!(parsed.http) }
+      status, _ = to_int(http.status)
+      if status == null { status = 0 }
+      .activity_id = 1
+      if status >= 500 { .severity_id = 4 }
+      if status >= 400 && status < 500 { .severity_id = 3 }
+      if status >= 200 && status < 400 { .severity_id = 1 }
+      .http_request = {
+        "method": http.http_method,
+        "url": {"path": http.url, "hostname": http.hostname},
+        "version": http.protocol,
+        "headers": http.request_headers
+      }
+      .http_response = {
+        "status_code": http.status,
+        "length": http.length,
+        "content_type": http.http_content_type,
+        "headers": http.response_headers
+      }
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    } else if et == "flow" {
+      .class_uid = 4001
+      .activity_id = 1
+      fl = {}
+      if is_object(parsed.flow) { fl = object!(parsed.flow) }
+      state = to_string(fl.state) ?? ""
+      if state == "closed" { .activity_id = 2 }
+      if fl.alerted == true { .severity_id = 3 }
+      .traffic = {
+        "bytes_in": fl.bytes_toclient,
+        "bytes_out": fl.bytes_toserver,
+        "packets_in": fl.pkts_toclient,
+        "packets_out": fl.pkts_toserver
+      }
+      .flow_state = fl.state
+      .flow_reason = fl.reason
+      .flow_age = fl.age
+      .flow_start = fl.start
+      .flow_end = fl.end
+      .flow_alerted = fl.alerted
+      .tcp = parsed.tcp
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    } else if et == "fileinfo" {
+      .class_uid = 1001
+      .activity_id = 1
+      fi = {}
+      if is_object(parsed.fileinfo) { fi = object!(parsed.fileinfo) }
+      .file = {
+        "name": fi.filename,
+        "size": fi.size,
+        "state": fi.state,
+        "stored": fi.stored,
+        "gaps": fi.gaps
+      }
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+      .http = parsed.http
+    } else if et == "anomaly" {
+      .class_uid = 6008
+      .activity_id = 2
+      .severity_id = 3
+      .anomaly = parsed.anomaly
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    } else {
+      # Default: net activity stub
+      .src_endpoint = src_ep
+      .dst_endpoint = dst_ep
+    }
+
+    .flow_id = parsed.flow_id
+    .pcap_cnt = parsed.pcap_cnt
+    .app_proto = parsed.app_proto
+    .tx_id = parsed.tx_id
+    .direction = parsed.direction
+    .metadata_flow = parsed.metadata
+    .ether = parsed.ether
+
+    .message = src.message

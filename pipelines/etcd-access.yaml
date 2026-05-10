@@ -1,0 +1,90 @@
+# etcd access log (zap JSON)
+sourceId: "etcd-access"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "etcd access log (zap JSON)"
+sample: "{\"level\":\"info\",\"ts\":\"2023-12-21T21:23:07.770120Z\",\"caller\":\"v3rpc/interceptor.go:182\",\"msg\":\"request\",\"method\":\"/etcdserverpb.KV/Range\",\"peer\":\"127.0.0.1:46720\",\"grpc_code\":\"OK\",\"grpc_response_size\":2048,\"latency\":\"4.123ms\"}"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    method = to_string(parsed.method) ?? ""
+    activity = 0
+    if contains(method, "Range") || contains(method, "Watch") || contains(method, "Auth") { activity = 2 }
+    if contains(method, "Put") { activity = 3 }
+    if contains(method, "DeleteRange") || contains(method, "Delete") { activity = 4 }
+
+    # Severity from level + grpc_code
+    lvl = downcase(to_string(parsed.level) ?? "info")
+    grpc_code = to_string(parsed.grpc_code) ?? ""
+    sev = 1
+    if lvl == "debug" { sev = 0 }
+    if lvl == "info" { sev = 1 }
+    if lvl == "warn" || lvl == "warning" { sev = 3 }
+    if lvl == "error" { sev = 4 }
+    if grpc_code != "" && grpc_code != "OK" { sev = 3 }
+    if grpc_code == "PermissionDenied" || grpc_code == "Unauthenticated" { sev = 4 }
+
+    .class_uid = 6003
+    .activity_id = activity
+    .severity_id = sev
+
+    t_str = to_string(parsed.ts) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "etcd", "vendor_name": "etcd"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.caller) ?? ""
+    }
+
+    .api = {
+      "operation": method,
+      "service": {"name": method}
+    }
+
+    peer_str = to_string(parsed.peer) ?? ""
+    peer_ip = ""
+    if peer_str != "" {
+      peer_parts = split(peer_str, ":")
+      if length(peer_parts) > 0 {
+        peer_ip = to_string(peer_parts[0])
+      }
+    }
+    .src_endpoint = {"ip": peer_ip, "address": peer_str}
+
+    .actor = {
+      "user": {"name": parsed.user}
+    }
+
+    # Map gRPC code → http_response.status_code (best-effort)
+    code = 200
+    if grpc_code != "" && grpc_code != "OK" { code = 500 }
+    if grpc_code == "PermissionDenied" { code = 403 }
+    if grpc_code == "Unauthenticated" { code = 401 }
+    if grpc_code == "NotFound" { code = 404 }
+
+    .http_response = {"status_code": code}
+
+    .message = parsed.msg
+    .method = method
+    .peer = parsed.peer
+    .grpc_code = grpc_code
+    .grpc_response_size = parsed.grpc_response_size
+    .latency = parsed.latency
+    .threshold = parsed.threshold
+    .error = parsed.error
+    .caller = parsed.caller
+    .level = parsed.level
+    .user = parsed.user
+    .raw_data = parsed

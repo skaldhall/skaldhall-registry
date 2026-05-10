@@ -1,0 +1,109 @@
+# Cilium Hubble flow logs
+sourceId: "hubble-flow"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4001
+description: "Cilium Hubble flow logs"
+sample: "{\"flow\":{\"time\":\"2023-08-21T12:12:13.517394084Z\",\"verdict\":\"DROPPED\",\"IP\":{\"source\":\"fe80::64d8:8aff:fe72:fc14\",\"destination\":\"ff02::2\",\"ipVersion\":\"IPv6\"},\"l4\":{\"ICMPv6\":{\"type\":133}},\"source\":{},\"destination\":{},\"node_name\":\"kind-kind/kind-worker\",\"drop_reason_desc\":\"INVALID_SOURCE_IP\"},\"node_name\":\"kind-kind/kind-worker\",\"time\":\"2023-08-21T12:12:13.517394084Z\"}"
+vrl: |
+    # Hubble flow log -> OCSF 4001 Network Activity
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 4001
+    .metadata = {"product": {"name": "Hubble", "vendor_name": "Cilium"}, "version": "1.5.0"}
+
+    # Flow object
+    flow = {}
+    if is_object(parsed.flow) { flow = object!(parsed.flow) }
+
+    # Time
+    t = flow.time
+    if t == null { t = parsed.time }
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    # Verdict -> activity_id and severity_id
+    verdict = to_string(flow.verdict) ?? ""
+    .activity_id = 0
+    .severity_id = 1
+    if verdict == "FORWARDED"  { .activity_id = 1; .severity_id = 1 }
+    if verdict == "DROPPED"    { .activity_id = 5; .severity_id = 4 }
+    if verdict == "AUDIT"      { .activity_id = 1; .severity_id = 2 }
+    if verdict == "REDIRECTED" { .activity_id = 1; .severity_id = 1 }
+    if verdict == "ERROR"      { .activity_id = 0; .severity_id = 4 }
+
+    # IP endpoints
+    src_ep = {}
+    dst_ep = {}
+    if is_object(flow.IP) {
+      ipobj = object!(flow.IP)
+      src_ep = {"ip": ipobj.source}
+      dst_ep = {"ip": ipobj.destination}
+    }
+
+    # L4 ports (TCP / UDP / SCTP / ICMP)
+    l4 = {}
+    if is_object(flow.l4) { l4 = object!(flow.l4) }
+
+    if is_object(l4.TCP) {
+      tcp = object!(l4.TCP)
+      src_ep = merge(src_ep, {"port": tcp.source_port})
+      dst_ep = merge(dst_ep, {"port": tcp.destination_port})
+      .connection_info = {"protocol_name": "tcp"}
+    }
+    if is_object(l4.UDP) {
+      udp = object!(l4.UDP)
+      src_ep = merge(src_ep, {"port": udp.source_port})
+      dst_ep = merge(dst_ep, {"port": udp.destination_port})
+      .connection_info = {"protocol_name": "udp"}
+    }
+    if is_object(l4.SCTP) {
+      sctp = object!(l4.SCTP)
+      src_ep = merge(src_ep, {"port": sctp.source_port})
+      dst_ep = merge(dst_ep, {"port": sctp.destination_port})
+      .connection_info = {"protocol_name": "sctp"}
+    }
+    if is_object(l4.ICMPv4) { .connection_info = {"protocol_name": "icmp"} }
+    if is_object(l4.ICMPv6) { .connection_info = {"protocol_name": "icmpv6"} }
+
+    # Pod / namespace context
+    if is_object(flow.source) {
+      src_ep = merge(src_ep, {"namespace": flow.source.namespace, "pod_name": flow.source.pod_name, "labels": flow.source.labels})
+    }
+    if is_object(flow.destination) {
+      dst_ep = merge(dst_ep, {"namespace": flow.destination.namespace, "pod_name": flow.destination.pod_name, "labels": flow.destination.labels})
+    }
+
+    .src_endpoint = src_ep
+    .dst_endpoint = dst_ep
+
+    # Direction
+    .traffic_direction = flow.traffic_direction
+
+    # Drop reason
+    if verdict == "DROPPED" {
+      .drop_reason = flow.drop_reason_desc
+    }
+
+    # Summary -> message
+    m = flow.Summary
+    if m == null { m = flow.summary }
+    if m == null { m = src.message }
+    .message = m
+
+    # Node
+    .node_name = flow.node_name
+    .flow_type = flow.Type
+
+    # L7 details (optional)
+    if is_object(flow.l7) {
+      .l7 = flow.l7
+    }

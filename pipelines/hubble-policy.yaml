@@ -1,0 +1,86 @@
+# Cilium Hubble policy verdicts
+sourceId: "hubble-policy"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4001
+description: "Cilium Hubble policy verdicts"
+sample: "{\"flow\":{\"time\":\"2023-08-21T12:30:00.123456789Z\",\"verdict\":\"DROPPED\",\"drop_reason\":133,\"drop_reason_desc\":\"POLICY_DENIED\",\"event_type\":{\"type\":5,\"sub_type\":1},\"IP\":{\"source\":\"10.244.1.60\",\"destination\":\"10.244.1.5\",\"ipVersion\":\"IPv4\"},\"l4\":{\"TCP\":{\"source_port\":44916,\"destination_port\":3306,\"flags\":{\"SYN\":true}}},\"source\":{\"namespace\":\"default\",\"pod_name\":\"frontend\",\"identity\":12345,\"labels\":[\"k8s:app=frontend\"]},\"destination\":{\"namespace\":\"default\",\"pod_name\":\"mysql-0\",\"identity\":67890,\"labels\""
+vrl: |
+    # Hubble policy verdict log -> OCSF 4001 Network Activity (policy verdict)
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 4001
+    .metadata = {"product": {"name": "Hubble", "vendor_name": "Cilium", "feature": {"name": "policy"}}, "version": "1.5.0"}
+
+    flow = {}
+    if is_object(parsed.flow) { flow = object!(parsed.flow) }
+
+    t = flow.time
+    if t == null { t = parsed.time }
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    verdict = to_string(flow.verdict) ?? ""
+    .activity_id = 0
+    .severity_id = 1
+    if verdict == "FORWARDED"  { .activity_id = 1; .severity_id = 1 }
+    if verdict == "DROPPED"    { .activity_id = 5; .severity_id = 4 }
+    if verdict == "AUDIT"      { .activity_id = 1; .severity_id = 2 }
+    if verdict == "REDIRECTED" { .activity_id = 1; .severity_id = 1 }
+    if verdict == "ERROR"      { .activity_id = 0; .severity_id = 4 }
+
+    src_ep = {}
+    dst_ep = {}
+    if is_object(flow.IP) {
+      ipobj = object!(flow.IP)
+      src_ep = {"ip": ipobj.source}
+      dst_ep = {"ip": ipobj.destination}
+    }
+
+    l4 = {}
+    if is_object(flow.l4) { l4 = object!(flow.l4) }
+
+    if is_object(l4.TCP) {
+      tcp = object!(l4.TCP)
+      src_ep = merge(src_ep, {"port": tcp.source_port})
+      dst_ep = merge(dst_ep, {"port": tcp.destination_port})
+      .connection_info = {"protocol_name": "tcp"}
+    }
+    if is_object(l4.UDP) {
+      udp = object!(l4.UDP)
+      src_ep = merge(src_ep, {"port": udp.source_port})
+      dst_ep = merge(dst_ep, {"port": udp.destination_port})
+      .connection_info = {"protocol_name": "udp"}
+    }
+
+    if is_object(flow.source) {
+      src_ep = merge(src_ep, {"namespace": flow.source.namespace, "pod_name": flow.source.pod_name, "identity": flow.source.identity, "labels": flow.source.labels})
+    }
+    if is_object(flow.destination) {
+      dst_ep = merge(dst_ep, {"namespace": flow.destination.namespace, "pod_name": flow.destination.pod_name, "identity": flow.destination.identity, "labels": flow.destination.labels})
+    }
+
+    .src_endpoint = src_ep
+    .dst_endpoint = dst_ep
+
+    .traffic_direction = flow.traffic_direction
+    .policy_match_type = flow.policy_match_type
+    .drop_reason = flow.drop_reason_desc
+    .egress_allowed_by = flow.egress_allowed_by
+    .ingress_allowed_by = flow.ingress_allowed_by
+
+    m = flow.Summary
+    if m == null { m = src.message }
+    .message = m
+    .node_name = flow.node_name
+    .flow_type = flow.Type
+
+    if is_object(flow.l7) { .l7 = flow.l7 }

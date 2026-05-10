@@ -1,0 +1,73 @@
+# kube-apiserver process log (klog)
+sourceId: "kube-apiserver-server"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "klog"
+ocsfClass: 6008
+description: "kube-apiserver process log (klog)"
+sample: "I0512 10:31:50.378204       1 server.go:553] \"Starting Kubernetes API Server\" version=\"v1.28.3\""
+vrl: |
+    src = .
+
+    line = to_string(.message) ?? ""
+
+    mr, merr = parse_regex(line, r'^(?P<lvl>[IWEF])(?P<mmdd>\d{4}) (?P<time>\d{2}:\d{2}:\d{2}\.\d+)\s+(?P<pid>\d+)\s+(?P<file>\S+):(?P<lineno>\d+)\] (?P<msg>.*)$')
+    m = {}
+    if merr == null {
+      m = mr
+    }
+
+    . = {}
+
+    lvl_v, _ = get(m, ["lvl"])
+    mmdd_v, _ = get(m, ["mmdd"])
+    time_v, _ = get(m, ["time"])
+    pid_v, _ = get(m, ["pid"])
+    file_v, _ = get(m, ["file"])
+    lineno_v, _ = get(m, ["lineno"])
+    msg_v, _ = get(m, ["msg"])
+
+    lvl = to_string(lvl_v) ?? "I"
+    sev = 1
+    if lvl == "I" { sev = 1 }
+    if lvl == "W" { sev = 3 }
+    if lvl == "E" { sev = 4 }
+    if lvl == "F" { sev = 5 }
+
+    # Apiserver-server uses 6008 for E/W errors, 6002 for I lifecycle
+    class_uid = 6002
+    if lvl == "E" || lvl == "W" || lvl == "F" { class_uid = 6008 }
+
+    .class_uid = class_uid
+    .activity_id = 0
+    .severity_id = sev
+
+    mmdd = to_string(mmdd_v) ?? ""
+    time_str = to_string(time_v) ?? ""
+    ts = now()
+    if mmdd != "" && time_str != "" {
+      yr = format_timestamp!(now(), format: "%Y")
+      composed = yr + "-" + slice!(mmdd, 0, 2) + "-" + slice!(mmdd, 2, 4) + "T" + time_str + "Z"
+      ts = parse_timestamp(composed, format: "%+") ?? now()
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "kube-apiserver", "vendor_name": "Kubernetes"},
+      "version": "1.5.0",
+      "uid": ""
+    }
+
+    msg_str = to_string(msg_v) ?? ""
+    if msg_str == "" { msg_str = line }
+    .message = msg_str
+
+    .process = {
+      "pid": to_int(pid_v) ?? 0,
+      "name": "kube-apiserver"
+    }
+    .log = {
+      "file": to_string(file_v) ?? "",
+      "line": to_int(lineno_v) ?? 0,
+      "level": lvl
+    }
+    .raw_data = line

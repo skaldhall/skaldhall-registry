@@ -1,0 +1,72 @@
+# OPA Gatekeeper Constraint violations
+sourceId: "gatekeeper-violation"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "OPA Gatekeeper Constraint violations"
+sample: "{\"apiVersion\":\"constraints.gatekeeper.sh/v1beta1\",\"kind\":\"K8sRequiredLabels\",\"metadata\":{\"name\":\"ns-must-have-gk\",\"creationTimestamp\":\"2024-08-12T13:00:00Z\"},\"spec\":{\"enforcementAction\":\"deny\",\"match\":{\"kinds\":[{\"apiGroups\":[\"\"],\"kinds\":[\"Namespace\"]}]},\"parameters\":{\"labels\":[\"gatekeeper\"]}},\"status\":{\"auditTimestamp\":\"2024-08-12T13:05:00Z\",\"enforced\":true,\"violations\":[{\"enforcementAction\":\"deny\",\"group\":\"\",\"version\":\"v1\",\"kind\":\"Namespace\",\"name\":\"default\",\"message\":\"you must provide labels: "
+vrl: |
+    # Gatekeeper violation -> OCSF 2004 Detection Finding
+    # NOTE: status.violations[] may have multiple entries; we map first and stash count.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .activity_id = 1
+    .metadata = {"product": {"name": "OPA Gatekeeper", "vendor_name": "Open Policy Agent"}, "version": "1.5.0"}
+
+    violations = []
+    if is_array(parsed.status.violations) { violations = array!(parsed.status.violations) }
+    .count = length(violations)
+
+    first = {}
+    if length(violations) > 0 {
+      f = violations[0]
+      if is_object(f) { first = object!(f) }
+    }
+
+    # Severity by enforcementAction
+    ea = to_string(first.enforcementAction) ?? to_string(parsed.spec.enforcementAction) ?? ""
+    sev_id = 3
+    if ea == "deny" { sev_id = 4 }
+    if ea == "warn" { sev_id = 2 }
+    if ea == "dryrun" { sev_id = 1 }
+    .severity_id = sev_id
+
+    # Time
+    ts = parsed.status.auditTimestamp
+    if ts == null { ts = parsed.metadata.creationTimestamp }
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    .finding_info = {
+      "title": parsed.kind,
+      "uid": parsed.metadata.name,
+      "types": [parsed.apiVersion]
+    }
+    .message = first.message
+
+    .policy = {
+      "name": parsed.metadata.name,
+      "kind": parsed.kind,
+      "enforcementAction": ea
+    }
+
+    .resource = {
+      "name": first.name,
+      "kind": first.kind,
+      "group": first.group,
+      "version": first.version
+    }
+
+    if is_object(parsed.spec) { .spec = parsed.spec }
+    .constraint_status = parsed.status
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

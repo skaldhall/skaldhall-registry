@@ -1,0 +1,120 @@
+# Linux auditd kernel events (key=value)
+sourceId: "linux-auditd"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "kv"
+ocsfClass: 1007
+description: "Linux auditd kernel events (key=value)"
+sample: "type=SYSCALL msg=audit(1723460400.123:8675309): arch=c000003e syscall=59 success=yes exit=0 a0=55b3c4d2e000 a1=55b3c4d3a000 a2=55b3c4d3a060 a3=8 items=2 ppid=2345 pid=2400 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=2 comm=\"cat\" exe=\"/usr/bin/cat\" subj=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023 key=\"sensitive_files\""
+vrl: |
+    # Linux auditd -> OCSF 1007 Process Activity (or 1001 File Activity for SYSCALL with file ops)
+    src = .
+    raw = string(.message) ?? ""
+
+    # Extract type and the audit() event id
+    header = parse_regex(raw, r'^type=(?P<type>\S+)\s+msg=audit\((?P<epoch>\d+\.\d+):(?P<seq>\d+)\):\s*(?P<rest>.*)$') ?? {}
+    audit_type = upcase(string(header.type) ?? "UNKNOWN")
+    rest = string(header.rest) ?? ""
+
+    # Time from epoch
+    epoch_str = string(header.epoch) ?? ""
+    parsed_ts = null
+    if epoch_str != "" {
+      ef = to_float(epoch_str) ?? 0.0
+      parsed_ts = from_unix_timestamp!(to_int(ef * 1000000.0), unit: "microseconds")
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .tmp_time = parsed_ts
+
+    # Parse the rest as key=value (auditd uses key="value" forms)
+    kv = parse_key_value(rest, key_value_delimiter: "=", field_delimiter: " ", whitespace: "lenient") ?? {}
+
+    . = {}
+    .metadata = {"product": {"name": "auditd", "vendor_name": "Linux"}, "version": "1.5.0"}
+    .time = .tmp_time = null
+    .time = parsed_ts
+
+    # Class: 1007 Process Activity for syscall/exec/anom; 1001 File Activity for path-related ops; 3002 Authentication for USER_LOGIN/AUTH; 1007 default
+    class_uid = 1007
+    activity_id = 1
+    severity_id = 1
+
+    if audit_type == "SYSCALL" { class_uid = 1007; activity_id = 1 }
+    if audit_type == "EXECVE"  { class_uid = 1007; activity_id = 1 }
+    if audit_type == "PATH"    { class_uid = 1001; activity_id = 1 }
+    if audit_type == "USER_LOGIN" { class_uid = 3002; activity_id = 1 }
+    if audit_type == "USER_AUTH"  { class_uid = 3002; activity_id = 1 }
+    if audit_type == "ANOM_ABEND" { class_uid = 1007; activity_id = 4; severity_id = 4 }
+    if audit_type == "ADD_USER"   { class_uid = 3001; activity_id = 1; severity_id = 3 }
+    if audit_type == "USER_CMD"   { class_uid = 1007; activity_id = 1 }
+
+    # Failure -> bump severity
+    res = downcase(string(kv.res) ?? "")
+    if res == "failed" || res == "fail" { severity_id = 3 }
+    success = downcase(string(kv.success) ?? "")
+    if success == "no" { severity_id = 3 }
+
+    .class_uid = class_uid
+    .activity_id = activity_id
+    .severity_id = severity_id
+
+    # Process info
+    .process = {
+      "pid": to_int(kv.pid) ?? 0,
+      "parent_process": {"pid": to_int(kv.ppid) ?? 0},
+      "name": kv.comm,
+      "file": {"path": kv.exe},
+      "cmd_line": kv.cmd
+    }
+
+    # Actor / user
+    .actor = {
+      "user": {
+        "uid": to_int(kv.uid) ?? null,
+        "name": kv.acct,
+        "session_uid": to_int(kv.auid) ?? null
+      },
+      "session": {"uid": to_int(kv.ses) ?? null}
+    }
+
+    # Source endpoint (login/auth lines often have addr=)
+    addr_str = string(kv.addr) ?? ""
+    if addr_str != "" && addr_str != "?" {
+      .src_endpoint = {"ip": addr_str, "hostname": kv.hostname}
+    }
+
+    # File (PATH records)
+    if audit_type == "PATH" {
+      .file = {
+        "path": kv.name,
+        "name": kv.name,
+        "uid": to_int(kv.inode) ?? null,
+        "type": kv.nametype
+      }
+    }
+
+    # EXECVE: argv reconstruction
+    if audit_type == "EXECVE" {
+      argc = to_int(kv.argc) ?? 0
+      args_arr = []
+      args_arr = push(args_arr, kv.a0)
+      args_arr = push(args_arr, kv.a1)
+      args_arr = push(args_arr, kv.a2)
+      args_arr = push(args_arr, kv.a3)
+      .process.argv = args_arr
+      .process.argc = argc
+    }
+
+    # Auditd extras
+    .auditd = {
+      "type": audit_type,
+      "event_id": header.seq,
+      "key": kv.key,
+      "syscall": kv.syscall,
+      "arch": kv.arch,
+      "exit": kv.exit,
+      "subj": kv.subj,
+      "res": res,
+      "success": success
+    }
+    .raw_data = raw

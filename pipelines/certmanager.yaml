@@ -1,0 +1,89 @@
+# cert-manager controller log (zap)
+sourceId: "certmanager"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6002
+description: "cert-manager controller log (zap)"
+sample: "{\"level\":\"info\",\"ts\":\"2024-08-12T13:00:00.123Z\",\"logger\":\"cert-manager.controller\",\"msg\":\"starting\",\"controller\":\"certificates\",\"worker count\":5}"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    # 6002 = Application Lifecycle
+    .class_uid = 6002
+
+    msg_str = to_string(parsed.msg) ?? ""
+    msg_l = downcase(msg_str)
+
+    # Activity: 1 install, 2 remove, 3 start, 4 stop, 5 restart, 6 enable, 7 disable, 8 update, 0 unknown
+    activity = 0
+    if contains(msg_l, "starting") { activity = 3 }
+    if contains(msg_l, "issued") { activity = 1 }
+    if contains(msg_l, "verified") { activity = 3 }
+    if contains(msg_l, "re-issued") { activity = 8 }
+    if contains(msg_l, "renew") { activity = 8 }
+    if contains(msg_l, "up to date") { activity = 3 }
+    if contains(msg_l, "fail") { activity = 0 }
+    .activity_id = activity
+
+    lvl = downcase(to_string(parsed.level) ?? "info")
+    sev = 1
+    if lvl == "debug" { sev = 1 }
+    if lvl == "info" { sev = 1 }
+    if lvl == "warn" || lvl == "warning" { sev = 3 }
+    if lvl == "error" { sev = 4 }
+    if lvl == "fatal" || lvl == "panic" { sev = 5 }
+    .severity_id = sev
+
+    t_str = to_string(parsed.ts) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    logger = to_string(parsed.logger) ?? ""
+    controller = to_string(parsed.controller) ?? ""
+
+    resource_obj = {}
+    if is_object(parsed.resource) { resource_obj = object!(parsed.resource) }
+
+    .metadata = {
+      "product": {"name": "cert-manager", "vendor_name": "cert-manager.io"},
+      "version": "1.5.0",
+      "uid": to_string(resource_obj.name) ?? ""
+    }
+
+    .actor = {
+      "process": {"name": logger}
+    }
+
+    .entity = {
+      "type": "Certificate",
+      "name": resource_obj.name,
+      "namespace": resource_obj.namespace
+    }
+
+    .message = msg_str
+    .level = parsed.level
+    .logger = logger
+    .controller = controller
+    .resource = resource_obj
+    .reason = parsed.reason
+    .reason_message = parsed.reasonMessage
+    .error = parsed.error
+    .dns_name = parsed.dnsName
+    .challenge_type = parsed.type
+    .order = parsed.order
+    .not_before = parsed.notBefore
+    .not_after = parsed.notAfter
+    .common_name = parsed.commonName
+    .dns_names = parsed.dnsNames
+    .renewal_time = parsed.renewalTime
+    .worker_count = parsed."worker count"
+    .raw_data = parsed

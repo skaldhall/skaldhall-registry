@@ -1,0 +1,130 @@
+# Istio Envoy access log (default JSON format)
+sourceId: "istio-envoy-access"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4002
+description: "Istio Envoy access log (default JSON format)"
+sample: "[2024-08-12T10:23:45.123Z] \"GET /api/v1/users HTTP/1.1\" 200 - via_upstream - \"-\" 0 1234 12 11 \"-\" \"curl/7.81.0\" \"84961386-6d84-929d-98bd-c5aee93b5c88\" \"httpbin.foo.svc.cluster.local:8000\" \"10.44.1.27:80\" outbound|8000||httpbin.foo.svc.cluster.local 10.44.1.23:37652 10.0.45.184:8000 10.44.1.23:46520 - default"
+vrl: |
+    # Istio / Envoy access log -> OCSF 4002 HTTP Activity (text or JSON)
+    src = .
+    parsed = {}
+    is_json = false
+    if is_string(.message) {
+      msg_str = string!(.message)
+      ok, err = parse_json(msg_str)
+      if err == null && is_object(ok) {
+        parsed = object!(ok)
+        is_json = true
+      }
+    }
+
+    . = {}
+
+    .class_uid = 4002
+    .metadata = {"product": {"name": "Envoy", "vendor_name": "Istio"}, "version": "1.5.0"}
+
+    method = ""
+    path = ""
+    protocol = ""
+    status = 0
+    bytes_in = null
+    bytes_out = null
+    dur_ms = null
+    ua = ""
+    xff = ""
+    authority = ""
+    request_id = ""
+    upstream_host = ""
+    upstream_cluster = ""
+    downstream_local = ""
+    downstream_remote = ""
+    response_flags = ""
+    ts = null
+
+    if is_json {
+      ts = parsed.start_time
+      method = to_string(parsed.method) ?? ""
+      path = to_string(parsed.path) ?? ""
+      protocol = to_string(parsed.protocol) ?? ""
+      s, _ = to_int(parsed.response_code)
+      if s != null { status = s }
+      bytes_in = parsed.bytes_received
+      bytes_out = parsed.bytes_sent
+      dur_ms = parsed.dur_ms
+      ua = to_string(parsed.user_agent) ?? ""
+      xff = to_string(parsed.x_forwarded_for) ?? ""
+      authority = to_string(parsed.authority) ?? ""
+      request_id = to_string(parsed.request_id) ?? ""
+      upstream_host = to_string(parsed.upstream_host) ?? ""
+      upstream_cluster = to_string(parsed.upstream_cluster) ?? ""
+      downstream_local = to_string(parsed.downstream_local_address) ?? ""
+      downstream_remote = to_string(parsed.downstream_remote_address) ?? ""
+      response_flags = to_string(parsed.response_flags) ?? ""
+    } else {
+      raw = to_string(src.message) ?? ""
+      m, e = parse_regex(raw, r'^\[(?P<ts>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>[^"]+)" (?P<status>\d+) (?P<flags>\S+) (?P<extflags>\S+) (?P<reason>\S+) "(?P<xff>[^"]*)" (?P<bin>\d+) (?P<bout>\d+) (?P<dur>\d+) (?P<ust>\S+) "(?P<rxff>[^"]*)" "(?P<ua>[^"]*)" "(?P<rid>[^"]*)" "(?P<authority>[^"]*)" "(?P<uhost>[^"]*)"(?: (?P<ucluster>\S+))?(?: (?P<ulocal>\S+))?(?: (?P<dlocal>\S+))?(?: (?P<dremote>\S+))?(?: (?P<sni>\S+))?(?: (?P<route>\S+))?')
+      if e == null {
+        parsed_ts, terr = parse_timestamp(m.ts, "%+")
+        if terr == null { ts = parsed_ts }
+        method = m.method
+        path = m.path
+        protocol = m.proto
+        s, _ = to_int(m.status)
+        if s != null { status = s }
+        bytes_in, _ = to_int(m.bin)
+        bytes_out, _ = to_int(m.bout)
+        dur_ms, _ = to_int(m.dur)
+        ua = m.ua
+        xff = m.rxff
+        authority = m.authority
+        request_id = m.rid
+        upstream_host = m.uhost
+        response_flags = m.flags
+      }
+    }
+
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    .activity_id = 1
+    .severity_id = 1
+    if status >= 500 { .severity_id = 4 }
+    if status >= 400 && status < 500 { .severity_id = 3 }
+
+    .http_request = {
+      "method": method,
+      "url": {"path": path, "hostname": authority},
+      "version": protocol,
+      "user_agent": ua,
+      "uid": request_id,
+      "length": bytes_in
+    }
+    .http_response = {
+      "status_code": status,
+      "length": bytes_out
+    }
+
+    # Source endpoint - prefer x_forwarded_for as orig client, else downstream_remote
+    xip = xff
+    if xip == "" || xip == "-" {
+      # parse "ip:port"
+      if downstream_remote != "" {
+        parts = split(downstream_remote, ":")
+        if length(parts) >= 1 { xip = parts[0] }
+      }
+    }
+    .src_endpoint = {
+      "ip": xip,
+      "downstream_remote": downstream_remote
+    }
+    .dst_endpoint = {
+      "downstream_local": downstream_local,
+      "upstream_host": upstream_host,
+      "upstream_cluster": upstream_cluster
+    }
+
+    .dur_ms = dur_ms
+    .response_flags = response_flags
+    .message = src.message

@@ -1,0 +1,75 @@
+# Sysdig OSS event JSON
+sourceId: "sysdig-oss"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 1007
+description: "Sysdig OSS event JSON"
+sample: "{\"evt.cpu\":0,\"evt.dir\":\"<\",\"evt.info\":\"res=0 tuple=10.0.2.15:57854->10.0.2.3:domain \",\"evt.num\":2253,\"evt.outputtime\":1486051398854929464,\"evt.type\":\"connect\",\"proc.name\":\"ping\",\"thread.tid\":20380}"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    evt_type = to_string(parsed."evt.type") ?? ""
+
+    class_uid = 1007
+    activity = 1
+    if evt_type == "execve" || evt_type == "execveat" || evt_type == "clone" || evt_type == "fork" {
+      class_uid = 1007
+      activity = 1
+    }
+    if evt_type == "open" || evt_type == "openat" || evt_type == "creat" || evt_type == "unlink" || evt_type == "unlinkat" || evt_type == "write" || evt_type == "rename" || evt_type == "renameat" {
+      class_uid = 1001
+      activity = 6
+    }
+    if evt_type == "connect" || evt_type == "accept" || evt_type == "accept4" || evt_type == "bind" || evt_type == "listen" {
+      class_uid = 4001
+      activity = 1
+    }
+
+    .class_uid = class_uid
+    .activity_id = activity
+    .severity_id = 1
+
+    # evt.outputtime is nanoseconds epoch
+    ts_ns = to_int(parsed."evt.outputtime") ?? 0
+    ts = now()
+    if ts_ns > 0 {
+      ts_sec = to_int(ts_ns / 1000000000)
+      ts = from_unix_timestamp(ts_sec) ?? now()
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "Sysdig OSS", "vendor_name": "Sysdig"},
+      "version": "1.5.0",
+      "uid": to_string(parsed."evt.num") ?? ""
+    }
+
+    .process = {
+      "name": parsed."proc.name",
+      "tid": parsed."thread.tid"
+    }
+
+    .event_type = evt_type
+    .event_dir = parsed."evt.dir"
+    .event_num = parsed."evt.num"
+    .event_info = parsed."evt.info"
+    .event_cpu = parsed."evt.cpu"
+
+    .k8s = {
+      "container": {
+        "id": parsed."container.id",
+        "name": parsed."container.name"
+      }
+    }
+
+    .message = parsed."evt.info"
+    .raw_data = parsed

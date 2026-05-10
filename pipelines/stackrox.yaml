@@ -1,0 +1,97 @@
+# StackRox sensor/collector alerts
+sourceId: "stackrox"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "StackRox sensor/collector alerts"
+sample: "{\"level\":\"info\",\"ts\":\"2024-08-12T13:00:00.123Z\",\"logger\":\"sensor\",\"caller\":\"sensor/sensor.go:142\",\"msg\":\"Connected to Central\",\"central\":\"https://central.stackrox.svc:443\"}"
+vrl: |
+    # StackRox sensor/collector log -> OCSF 2004 Detection Finding
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .metadata = {"product": {"name": "StackRox", "vendor_name": "Red Hat", "feature": {"name": "acs"}}, "version": "1.5.0"}
+
+    t = parsed.ts
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    level = to_string(parsed.level) ?? ""
+    sev_str = to_string(parsed.severity) ?? ""
+
+    .activity_id = 1
+    .severity_id = 1
+    if level == "warn"  { .severity_id = 3 }
+    if level == "error" { .severity_id = 4 }
+    if level == "fatal" { .severity_id = 5 }
+    if sev_str == "LOW"      { .severity_id = 2 }
+    if sev_str == "MEDIUM"    { .severity_id = 3 }
+    if sev_str == "HIGH"      { .severity_id = 4 }
+    if sev_str == "CRITICAL"  { .severity_id = 5 }
+
+    .level = level
+    .logger = parsed.logger
+    .caller = parsed.caller
+
+    .finding = {
+      "title": parsed.policy,
+      "uid": parsed.policy_id,
+      "severity": sev_str,
+      "alert_id": parsed.alert_id,
+      "violations": parsed.violations,
+      "reason": parsed.reason,
+      "alert": parsed.alert
+    }
+
+    .process = {
+      "name": parsed.process_name,
+      "pid": parsed.process_pid,
+      "parent_pid": parsed.parent_pid,
+      "parent_name": parsed.parent_name,
+      "args": parsed.args
+    }
+
+    .container = {
+      "id": parsed.container_id,
+      "name": parsed.container_name
+    }
+
+    .k8s = {
+      "pod_name": parsed.pod_name,
+      "namespace": parsed.namespace,
+      "deployment": parsed.deployment,
+      "cluster": parsed.cluster
+    }
+
+    .network = {
+      "src_addr": parsed.src_addr,
+      "src_port": parsed.src_port,
+      "dst_addr": parsed.dst_addr,
+      "dst_port": parsed.dst_port,
+      "protocol": parsed.protocol,
+      "role": parsed.role
+    }
+
+    .admission = {
+      "resource_kind": parsed.resource_kind,
+      "resource_name": parsed.resource_name,
+      "operation": parsed.operation,
+      "admit": parsed.admit
+    }
+
+    .compliance = {
+      "standard": parsed.standard,
+      "error": parsed.error
+    }
+
+    .central = parsed.central
+    .standard = parsed.standard
+    .message = parsed.msg

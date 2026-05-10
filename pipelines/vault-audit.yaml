@@ -1,0 +1,133 @@
+# HashiCorp Vault audit log
+sourceId: "vault-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "HashiCorp Vault audit log"
+sample: "{\"time\":\"2024-08-12T13:00:00.123456789Z\",\"type\":\"request\",\"auth\":{\"client_token\":\"hmac-sha256:1234567890abcdef\",\"accessor\":\"hmac-sha256:fedcba0987654321\",\"display_name\":\"token\",\"policies\":[\"root\"],\"token_policies\":[\"root\"],\"token_type\":\"service\"},\"request\":{\"id\":\"abcdef12-3456-7890-abcd-ef1234567890\",\"operation\":\"read\",\"mount_type\":\"kv\",\"mount_accessor\":\"kv_a1b2c3d4\",\"client_token\":\"hmac-sha256:1234567890abcdef\",\"client_token_accessor\":\"hmac-sha256:fedcba0987654321\",\"namespace\":{\"id\":\"root\"},\"pa"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    # 6003 = API Activity
+    .class_uid = 6003
+
+    # request type → activity
+    type_v = to_string(parsed.type) ?? ""
+    auth_obj = {}
+    if is_object(parsed.auth) { auth_obj = object!(parsed.auth) }
+    req_obj = {}
+    if is_object(parsed.request) { req_obj = object!(parsed.request) }
+    resp_obj = {}
+    if is_object(parsed.response) { resp_obj = object!(parsed.response) }
+
+    operation = to_string(req_obj.operation) ?? ""
+    op_l = downcase(operation)
+
+    # OCSF API activity_id: 1 Create, 2 Read, 3 Update, 4 Delete, 6 Other
+    activity = 6
+    if op_l == "read" { activity = 2 }
+    if op_l == "list" { activity = 2 }
+    if op_l == "create" { activity = 1 }
+    if op_l == "update" { activity = 3 }
+    if op_l == "patch" { activity = 3 }
+    if op_l == "delete" { activity = 4 }
+    .activity_id = activity
+
+    # severity: error → high, otherwise info
+    sev = 1
+    err_v = to_string(parsed.error) ?? ""
+    if err_v != "" { sev = 4 }
+    .severity_id = sev
+
+    # time
+    t_str = to_string(parsed.time) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "vault", "vendor_name": "HashiCorp"},
+      "version": "1.5.0",
+      "uid": to_string(req_obj.id) ?? ""
+    }
+
+    # actor / user
+    .actor = {
+      "user": {
+        "name": auth_obj.display_name,
+        "uid": auth_obj.accessor,
+        "groups": auth_obj.policies
+      }
+    }
+
+    # src endpoint
+    remote_ip = to_string(req_obj.remote_address) ?? ""
+    remote_port = to_int(req_obj.remote_port) ?? 0
+    .src_endpoint = {
+      "ip": remote_ip,
+      "port": remote_port
+    }
+
+    # api block
+    .api = {
+      "operation": operation,
+      "service": {"name": "vault"},
+      "request": {
+        "uid": to_string(req_obj.id) ?? "",
+        "uri": to_string(req_obj.path) ?? ""
+      }
+    }
+
+    # status from type (request/response)
+    .status = type_v
+    if err_v != "" {
+      .status = "error"
+      .status_detail = err_v
+    }
+
+    # Token policies / extra fields
+    .auth = {
+      "client_token": auth_obj.client_token,
+      "accessor": auth_obj.accessor,
+      "display_name": auth_obj.display_name,
+      "policies": auth_obj.policies,
+      "token_policies": auth_obj.token_policies,
+      "token_type": auth_obj.token_type,
+      "metadata": auth_obj.metadata
+    }
+
+    ns_obj = {}
+    if is_object(req_obj.namespace) { ns_obj = object!(req_obj.namespace) }
+
+    .request = {
+      "id": req_obj.id,
+      "operation": operation,
+      "mount_type": req_obj.mount_type,
+      "mount_accessor": req_obj.mount_accessor,
+      "path": req_obj.path,
+      "namespace": ns_obj,
+      "client_token": req_obj.client_token,
+      "client_token_accessor": req_obj.client_token_accessor,
+      "remote_address": remote_ip,
+      "remote_port": remote_port,
+      "data": req_obj.data
+    }
+
+    .response = {
+      "mount_type": resp_obj.mount_type,
+      "data": resp_obj.data,
+      "auth": resp_obj.auth
+    }
+
+    .error = err_v
+    .audit_type = type_v
+    .message = "vault " + type_v + " " + operation + " " + (to_string(req_obj.path) ?? "")
+    .raw_data = parsed

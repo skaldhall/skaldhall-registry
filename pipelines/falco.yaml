@@ -1,0 +1,84 @@
+# Falco rule firings (priority/rule/output)
+sourceId: "falco"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "Falco rule firings (priority/rule/output)"
+sample: "{\"hostname\":\"falco-xczjd\",\"output\":\"13:44:05.478445995: Critical A shell was spawned in a container with an attached terminal (user=root user_loginuid=-1 k8s.ns=default k8s.pod=kubecon container=ee97d9c4186f shell=sh parent=runc cmdline=sh -c clear; (bash || ash || sh) terminal=34816 container_id=ee97d9c4186f image=docker.io/library/alpine)\",\"priority\":\"Critical\",\"rule\":\"Terminal shell in container\",\"source\":\"syscall\",\"tags\":[\"container\",\"mitre_execution\",\"shell\"],\"time\":\"2023-05-25T13:44:05.478"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    # Priority → severity
+    prio_s = downcase(to_string(parsed.priority) ?? "informational")
+    sev = 1
+    if prio_s == "emergency" { sev = 6 }
+    if prio_s == "critical" { sev = 5 }
+    if prio_s == "alert" { sev = 5 }
+    if prio_s == "error" { sev = 4 }
+    if prio_s == "warning" { sev = 3 }
+    if prio_s == "notice" { sev = 2 }
+    if prio_s == "informational" { sev = 1 }
+    if prio_s == "info" { sev = 1 }
+    if prio_s == "debug" { sev = 0 }
+
+    .class_uid = 2004
+    .activity_id = 1
+    .severity_id = sev
+
+    t_str = to_string(parsed.time) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    uid_s = to_string(parsed.uuid) ?? ""
+    if uid_s == "" { uid_s = to_string(parsed.rule) ?? "" }
+
+    .metadata = {
+      "product": {"name": "Falco", "vendor_name": "Falco"},
+      "version": "1.5.0",
+      "uid": uid_s
+    }
+
+    .finding = {
+      "title": to_string(parsed.rule) ?? "",
+      "desc": to_string(parsed.output) ?? "",
+      "types": parsed.tags
+    }
+
+    .message = to_string(parsed.output) ?? to_string(parsed.rule) ?? ""
+
+    # Process and host info from output_fields
+    of = {}
+    if is_object(parsed.output_fields) { of = object!(parsed.output_fields) }
+
+    .process = {
+      "name": of."proc.name",
+      "command_line": of."proc.cmdline",
+      "parent_process": {"name": of."proc.pname"}
+    }
+    .actor = {
+      "user": {
+        "name": of."user.name",
+        "uid": of."user.loginuid"
+      }
+    }
+    .device = {"hostname": parsed.hostname}
+    .k8s = {
+      "namespace": of."k8s.ns.name",
+      "pod": of."k8s.pod.name",
+      "container": {
+        "id": of."container.id",
+        "image": of."container.image.repository"
+      }
+    }
+    .raw_data = parsed.output
+    .source = parsed.source
+    .tags = parsed.tags

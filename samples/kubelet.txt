@@ -1,0 +1,11 @@
+# source: https://github.com/kubernetes/klog — kubelet uses klog native format
+I0512 11:00:01.123456    1234 kubelet.go:2456] "SyncLoop ADD" source="api" pods=["default/web-1"]
+I0512 11:00:01.234567    1234 kuberuntime_manager.go:1234] "Creating PodSandbox for pod" pod="default/web-1"
+I0512 11:00:02.345678    1234 kuberuntime_manager.go:1456] "Created PodSandbox for pod" pod="default/web-1" podSandboxID="abc123"
+I0512 11:00:03.456789    1234 kubelet.go:2398] "SyncLoop (PLEG): event for pod" pod="default/web-1" event=&{ID:abc123 Type:ContainerStarted Data:def456}
+W0512 11:01:00.567890    1234 prober_manager.go:280] "Failed to start probe worker" err="probe \"liveness\" of container \"nginx\" already running"
+E0512 11:02:00.678901    1234 pod_workers.go:1300] "Error syncing pod, skipping" err="failed to \"StartContainer\" for \"nginx\": ImagePullBackOff: \"Back-off pulling image\\\"nginx:bad\\\"\"" pod="default/web-1" podUID="abcd-1234"
+I0512 11:03:00.789012    1234 kubelet.go:2455] "SyncLoop DELETE" source="api" pods=["default/web-1"]
+I0512 11:03:01.890123    1234 kuberuntime_container.go:732] "Killing container with a grace period" pod="default/web-1" podUID="abcd-1234" containerName="nginx" gracePeriod=30
+I0512 11:04:00.901234    1234 kubelet_volumes.go:160] "Cleaned up orphaned pod volume dir" path="/var/lib/kubelet/pods/abcd-1234/volumes"
+I0512 11:05:00.012345    1234 setters.go:548] "Node became not ready" node="node-1" condition={Type:Ready Status:False LastHeartbeatTime:2024-05-12 11:05:00.012345 +0000 UTC LastTransitionTime:2024-05-12 11:05:00.012345 +0000 UTC Reason:KubeletNotReady Message:PLEG is not healthy}

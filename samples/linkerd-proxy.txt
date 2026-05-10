@@ -1,0 +1,10 @@
+# source: https://linkerd.io/2.14/reference/proxy-log-level/ + https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/src/lib.rs (tracing-subscriber default fmt)
+[     0.001234s]  INFO ThreadId(01) linkerd2_proxy: release 2.219.0 (abcd123) by linkerd on 2024-07-01T12:00:00Z
+[     0.005678s]  INFO ThreadId(02) linkerd2_proxy::rt: Using single-threaded proxy runtime
+[     1.234567s]  INFO ThreadId(03) inbound:accept{client.addr=10.244.1.25:51234}: linkerd_app_inbound::accept: Accepted policy=Policy { meta: Default { name: "all-unauthenticated" } }
+[     2.345678s]  WARN ThreadId(04) outbound:proxy{addr=10.0.0.5:8080}:rescue{client.addr=10.244.1.25:51500}: linkerd_app_core::errors::respond: Failed to proxy request: connect timed out after 1s
+[     3.456789s]  INFO ThreadId(05) inbound:server{port=8080}:rescue{client.addr=10.244.0.7:34001}: linkerd_app_core::errors::respond: HTTP/1.1 request failed error=unauthorized request on route status=403
+[     4.567890s] DEBUG ThreadId(06) policy:watch{port=8080}: linkerd_app_inbound::policy::api: policy update server=Server { protocol: Detect { http_routes: [...], timeout: 10s } }
+[     5.678901s]  INFO ThreadId(07) daemon:admin{listen.addr=0.0.0.0:4191}: linkerd_app::admin: listening
+[     6.789012s] ERROR ThreadId(08) outbound:proxy{addr=10.0.0.99:443}: linkerd_proxy_transport::connect: Connection refused (os error 111)
+[     7.890123s]  INFO ThreadId(09) inbound:accept{client.addr=10.244.2.3:55001}:server{port=443}:tls{client.id=Some(default.shop.serviceaccount.identity.linkerd.cluster.local)}: linkerd_app_inbound::policy::authorize::http: authorized policy.group=policy.linkerd.io policy.kind=httproute policy.name=orders-route

@@ -1,0 +1,103 @@
+# Antrea Flow Aggregator JSONL
+sourceId: "antrea-flow"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4001
+description: "Antrea Flow Aggregator JSONL"
+sample: "{\"flowStartSeconds\":1697011000,\"flowEndSeconds\":1697011010,\"flowEndReason\":2,\"sourceIPv4Address\":\"10.10.0.5\",\"destinationIPv4Address\":\"10.10.0.10\",\"sourceTransportPort\":51234,\"destinationTransportPort\":80,\"protocolIdentifier\":6,\"packetTotalCount\":42,\"octetTotalCount\":4096,\"packetDeltaCount\":42,\"octetDeltaCount\":4096,\"reversePacketTotalCount\":40,\"reverseOctetTotalCount\":8192,\"reversePacketDeltaCount\":40,\"reverseOctetDeltaCount\":8192,\"sourcePodName\":\"frontend-7d8b9-abc\",\"sourcePodNamespace\":\"defau"
+vrl: |
+    # Antrea flow (IPFIX-derived JSON) -> OCSF 4001 Network Activity
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 4001
+    .metadata = {"product": {"name": "Antrea", "vendor_name": "Antrea"}, "version": "1.5.0"}
+
+    t = parsed.flowEndSeconds
+    if t == null { t = parsed.flowStartSeconds }
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+    .start_time = parsed.flowStartSeconds
+    .end_time = parsed.flowEndSeconds
+
+    # Action via ingressNetworkPolicyRuleAction (1=Allow,2=Drop,3=Reject)
+    action = parsed.ingressNetworkPolicyRuleAction
+    .activity_id = 1
+    .severity_id = 1
+    if action == 2 { .activity_id = 5; .severity_id = 4 }
+    if action == 3 { .activity_id = 5; .severity_id = 4 }
+
+    # Endpoints
+    src_ip = parsed.sourceIPv4Address
+    if src_ip == null || src_ip == "" { src_ip = parsed.sourceIPv6Address }
+    dst_ip = parsed.destinationIPv4Address
+    if dst_ip == null || dst_ip == "" { dst_ip = parsed.destinationIPv6Address }
+
+    .src_endpoint = {
+      "ip": src_ip,
+      "port": parsed.sourceTransportPort,
+      "name": parsed.sourcePodName,
+      "namespace": parsed.sourcePodNamespace,
+      "node_name": parsed.sourceNodeName,
+      "labels": parsed.sourcePodLabels
+    }
+    .dst_endpoint = {
+      "ip": dst_ip,
+      "port": parsed.destinationTransportPort,
+      "name": parsed.destinationPodName,
+      "namespace": parsed.destinationPodNamespace,
+      "node_name": parsed.destinationNodeName,
+      "labels": parsed.destinationPodLabels,
+      "service_port": parsed.destinationServicePort,
+      "service_port_name": parsed.destinationServicePortName
+    }
+
+    # Protocol map
+    proto = parsed.protocolIdentifier
+    proto_name = "unknown"
+    if proto == 6  { proto_name = "tcp" }
+    if proto == 17 { proto_name = "udp" }
+    if proto == 1  { proto_name = "icmp" }
+    if proto == 132 { proto_name = "sctp" }
+    .connection_info = {
+      "protocol_num": proto,
+      "protocol_name": proto_name,
+      "tcp_state": parsed.tcpState
+    }
+
+    .traffic = {
+      "bytes": parsed.octetTotalCount,
+      "packets": parsed.packetTotalCount,
+      "bytes_in": parsed.reverseOctetTotalCount,
+      "bytes_out": parsed.octetTotalCount,
+      "packets_in": parsed.reversePacketTotalCount,
+      "packets_out": parsed.packetTotalCount
+    }
+
+    .policy = {
+      "ingress_name": parsed.ingressNetworkPolicyName,
+      "ingress_namespace": parsed.ingressNetworkPolicyNamespace,
+      "ingress_type": parsed.ingressNetworkPolicyType,
+      "ingress_rule_name": parsed.ingressNetworkPolicyRuleName,
+      "ingress_rule_action": parsed.ingressNetworkPolicyRuleAction,
+      "egress_name": parsed.egressNetworkPolicyName,
+      "egress_namespace": parsed.egressNetworkPolicyNamespace
+    }
+
+    .flow_type = parsed.flowType
+    .flow_end_reason = parsed.flowEndReason
+    .throughput = parsed.throughput
+    .reverse_throughput = parsed.reverseThroughput
+    .packet_delta_count = parsed.packetDeltaCount
+    .octet_delta_count = parsed.octetDeltaCount
+    .reverse_packet_delta_count = parsed.reversePacketDeltaCount
+    .reverse_octet_delta_count = parsed.reverseOctetDeltaCount
+
+    .message = src.message

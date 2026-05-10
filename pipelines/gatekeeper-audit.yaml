@@ -1,0 +1,57 @@
+# OPA Gatekeeper audit log
+sourceId: "gatekeeper-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "OPA Gatekeeper audit log"
+sample: "{\"level\":\"info\",\"ts\":1723460400.123,\"logger\":\"controller\",\"msg\":\"Audit cycle started\",\"process\":\"audit\",\"audit_id\":\"2024-08-12T13:00:00Z\"}"
+vrl: |
+    # Gatekeeper audit log -> OCSF 2004 Detection Finding
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .activity_id = 1
+    .severity_id = 1
+    .metadata = {"product": {"name": "OPA Gatekeeper", "vendor_name": "Open Policy Agent"}, "version": "1.5.0"}
+
+    # Time: ts may be float seconds-since-epoch
+    t_assigned = false
+    ts = parsed.ts
+    if is_float(ts) || is_integer(ts) {
+      ti = to_int(ts) ?? 0
+      t, e = from_unix_timestamp(ti, unit: "seconds")
+      if e == null { .time = t; t_assigned = true }
+    }
+    if is_string(ts) && !t_assigned {
+      .time = ts; t_assigned = true
+    }
+    if !t_assigned {
+      audit_id = parsed.audit_id
+      if is_string(audit_id) { .time = audit_id; t_assigned = true }
+    }
+    if !t_assigned { .time = src.timestamp }
+    if .time == null { .time = now() }
+
+    .message = parsed.msg
+    .level = parsed.level
+    .logger = parsed.logger
+    .process = parsed.process
+
+    .finding_info = {
+      "title": parsed.msg,
+      "uid": parsed.audit_id
+    }
+
+    .audit = {
+      "id": parsed.audit_id,
+      "process": parsed.process
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

@@ -1,0 +1,9 @@
+# source: https://nginx.org/en/docs/ngx_core_module.html#error_log + https://kubernetes.github.io/ingress-nginx/troubleshooting/
+2024/08/12 13:00:00 [error] 32#32: *1234 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.5.12, server: app.example.com, request: "GET /api/v1/users HTTP/1.1", upstream: "http://10.244.1.27:8080/api/v1/users", host: "app.example.com", referrer: "https://app.example.com/"
+2024/08/12 13:00:01 [warn] 32#32: *1235 a client request body is buffered to a temporary file /tmp/client-body/0000000123, client: 203.0.113.5, server: api.shop.example.com, request: "POST /v1/upload HTTP/1.1", host: "api.shop.example.com"
+2024/08/12 13:00:02 [error] 32#32: *1236 upstream timed out (110: Operation timed out) while reading response header from upstream, client: 10.0.6.8, server: orders.shop.example.com, request: "GET /v1/orders/12345 HTTP/1.1", upstream: "http://10.244.3.8:8080/v1/orders/12345", host: "orders.shop.example.com"
+2024/08/12 13:00:03 [crit] 32#32: *1237 SSL_do_handshake() failed (SSL: error:0A000412:SSL routines::sslv3 alert bad certificate) while SSL handshaking, client: 198.51.100.42, server: 0.0.0.0:443
+2024/08/12 13:00:04 [info] 32#32: *1238 client closed connection while waiting for request, client: 10.244.0.5, server: 0.0.0.0:80
+2024/08/12 13:00:05 [error] 32#32: *1239 limiting requests, excess: 5.012 by zone "global", client: 198.51.100.42, server: app.example.com, request: "GET / HTTP/1.1", host: "app.example.com"
+2024/08/12 13:00:06 [emerg] 30#30: invalid number of arguments in "proxy_pass" directive in /etc/nginx/conf.d/upstream.conf:42
+2024/08/12 13:00:07 [error] 32#32: *1240 access forbidden by rule, client: 192.0.2.10, server: secure.example.com, request: "GET /admin HTTP/1.1", host: "secure.example.com"

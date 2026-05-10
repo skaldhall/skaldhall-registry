@@ -1,0 +1,7 @@
+# source: https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rbac_filter + https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter
+[2024-08-12T11:00:00.123Z][12][debug][rbac] [source/extensions/filters/http/rbac/rbac_filter.cc:120] enforced denied, matched policy ns[default]-policy[deny-default]-rule[0]
+[2024-08-12T11:00:01.234Z][13][debug][rbac] [source/extensions/filters/http/rbac/rbac_filter.cc:118] enforced allowed, matched policy ns[shop]-policy[allow-orders]-rule[1]
+[2024-08-12T11:00:02.345Z][14][debug][ext_authz] [source/extensions/filters/http/ext_authz/ext_authz.cc:267] ext_authz filter finished with status: OK
+[2024-08-12T11:00:03.456Z][15][debug][ext_authz] [source/extensions/filters/http/ext_authz/ext_authz.cc:271] ext_authz rejected the request. Response status code: 403
+[2024-08-12T11:00:04.567Z][16][debug][rbac] [source/extensions/filters/http/rbac/rbac_filter.cc:120] shadow denied, matched policy ns[platform]-policy[shadow-block-internal]-rule[0]
+{"start_time":"2024-08-12T11:00:05.678Z","method":"GET","path":"/admin","protocol":"HTTP/1.1","response_code":403,"response_code_details":"ext_authz_denied","response_flags":"UAEX","bytes_received":0,"bytes_sent":17,"duration":3,"x_forwarded_for":"203.0.113.10","user_agent":"curl/8.0.1","request_id":"77777777-8888-9999-aaaa-bbbbbbbbbbbb","authority":"app.example.com","upstream_host":null,"upstream_cluster":"ext_authz_denied","downstream_local_address":"10.0.5.12:443","downstream_remote_address":"203.0.113.10:51990"}

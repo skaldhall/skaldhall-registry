@@ -1,0 +1,9 @@
+# source: https://docs.haproxy.org/2.8/configuration.html#8.2.3 (default httplog format)
+Aug 12 13:00:00 lb1 haproxy[1234]: 10.0.5.12:51220 [12/Aug/2024:13:00:00.123] frontend-https~ backend-app/web1 0/0/1/10/11 200 1456 - - ---- 12/12/0/1/0 0/0 "GET /api/v1/users HTTP/1.1"
+Aug 12 13:00:01 lb1 haproxy[1234]: 203.0.113.5:55021 [12/Aug/2024:13:00:01.234] frontend-https~ backend-auth/auth1 0/0/1/4/5 401 87 - - ---- 13/13/0/1/0 0/0 "POST /login HTTP/2.0"
+Aug 12 13:00:02 lb1 haproxy[1234]: 198.51.100.42:54000 [12/Aug/2024:13:00:02.345] frontend-https~ <NOSRV>/<NOSRV> -1/-1/-1/-1/0 503 217 - - SC-- 14/14/0/0/0 0/0 "GET /admin HTTP/1.1"
+Aug 12 13:00:03 lb1 haproxy[1234]: 10.0.6.8:50000 [12/Aug/2024:13:00:03.456] frontend-https~ backend-orders/orders2 0/0/2/30000/30002 504 234 - - sH-- 15/15/0/1/0 0/0 "PUT /v1/orders/12345 HTTP/1.1"
+Aug 12 13:00:04 lb1 haproxy[1234]: 10.244.0.5:43210 [12/Aug/2024:13:00:04.567] frontend-http~ backend-app/web2 0/0/0/1/1 200 567 - - ---- 16/16/0/1/0 0/0 "GET /healthz HTTP/1.1"
+Aug 12 13:00:05 lb1 haproxy[1234]: 192.0.2.10:60001 [12/Aug/2024:13:00:05.678] frontend-https~ backend-app/web1 0/0/1/2/3 304 178 - - ---- 17/17/0/1/0 0/0 "GET /index.html HTTP/2.0"
+Aug 12 13:00:06 lb1 haproxy[1234]: 10.0.7.31:55301 [12/Aug/2024:13:00:06.789] frontend-https~ backend-shop/api1 0/0/1/12/13 413 217 - - ---- 18/18/0/1/0 0/0 "POST /api/v2/upload HTTP/1.1"
+Aug 12 13:00:07 lb1 haproxy[1234]: 192.0.2.55:50321 [12/Aug/2024:13:00:07.890] frontend-https~ backend-monitor/<NOSRV> 0/-1/-1/-1/0 401 217 - - PR-- 19/19/0/0/0 0/0 "GET /metrics HTTP/1.1"

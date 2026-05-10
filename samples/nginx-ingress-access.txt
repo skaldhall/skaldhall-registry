@@ -1,0 +1,9 @@
+# source: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/log-format/
+192.168.1.10 - - [12/Aug/2024:13:00:00 +0000] "GET /api/v1/users HTTP/1.1" 200 1234 "https://app.example.com/dashboard" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" 567 0.011 [prod-api-80] [] 10.244.1.27:8080 1234 0.011 200 e8f7d6c5b4a39281756abcdef0123456
+10.0.5.12 - alice [12/Aug/2024:13:00:01 +0000] "POST /login HTTP/2.0" 401 87 "-" "curl/8.0.1" 234 0.005 [auth-auth-443] [] 10.244.2.5:8443 87 0.005 401 abcdef0123456789f7e6d5c4b3a29180
+198.51.100.42 - - [12/Aug/2024:13:00:02 +0000] "GET /admin HTTP/1.1" 403 19 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" 0 0.000 [-] [] - - - 403 1111222233334444aaaabbbbccccdddd
+203.0.113.5 - - [12/Aug/2024:13:00:03 +0000] "PUT /api/v1/orders/12345 HTTP/1.1" 503 234 "-" "orders-client/1.4.0" 512 30.012 [shop-orders-80] [] 10.244.3.8:8080, 10.244.3.9:8080 0, 0 30.001, 0.011 503, 503 deadbeefcafe1234567890abcdef1234
+10.244.0.5 - - [12/Aug/2024:13:00:04 +0000] "GET /healthz HTTP/1.1" 200 3 "-" "kube-probe/1.29" 0 0.001 [-] [] 127.0.0.1:80 3 0.001 200 -
+2001:db8::1 - - [12/Aug/2024:13:00:05 +0000] "GET /index.html HTTP/2.0" 304 0 "-" "Mozilla/5.0" 0 0.002 [default-frontend-80] [] 10.244.4.2:8080 0 0.002 304 7777aaaa8888bbbb9999ccccdddd0000
+10.0.6.8 - - [12/Aug/2024:13:00:06 +0000] "POST /api/v2/upload HTTP/1.1" 413 19 "-" "Go-http-client/1.1" 5242880 0.123 [shop-api-80] [] 10.244.5.10:8080 19 0.123 413 abcd1234ef567890aaaabbbbccccdddd
+192.0.2.10 - - [12/Aug/2024:13:00:07 +0000] "GET /metrics HTTP/1.1" 401 87 "-" "Prometheus/2.44.0" 0 0.001 [monitoring-prometheus-9090] [] - - - 401 ffffeeeedddd1111aaaa2222bbbb3333

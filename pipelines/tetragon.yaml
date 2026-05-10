@@ -1,0 +1,125 @@
+# Cilium Tetragon process events
+sourceId: "tetragon"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 1007
+description: "Cilium Tetragon process events"
+sample: "{\"process_exec\":{\"process\":{\"exec_id\":\"Z2tlLWpvaG4tNjMyLWRlZmF1bHQtcG9vbC03MDQxY2FjMC05czk1OjEzNTQ4Njc0MzIxMzczOjUyNjk5\",\"pid\":52699,\"uid\":0,\"cwd\":\"/\",\"binary\":\"/usr/bin/curl\",\"arguments\":\"https://ebpf.io/applications/#tetragon\",\"flags\":\"execve rootcwd\",\"start_time\":\"2023-10-06T22:03:57.700327580Z\",\"auid\":4294967295,\"pod\":{\"namespace\":\"default\",\"name\":\"xwing\",\"container\":{\"id\":\"containerd://551e161c47d8ff0eb665438a7bcd5b4e3ef5a297282b40a92b7c77d6bd168eb3\",\"name\":\"spaceship\",\"image\":{\"id\":\"docker"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    # Determine activity by envelope key
+    activity = 0
+    proc = {}
+    parent_proc = {}
+    pod_obj = {}
+    node_name = parsed.node_name
+
+    if is_object(parsed.process_exec) {
+      activity = 1
+      pe = object!(parsed.process_exec)
+      if is_object(pe.process) { proc = object!(pe.process) }
+      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    }
+    if is_object(parsed.process_exit) {
+      activity = 2
+      pe = object!(parsed.process_exit)
+      if is_object(pe.process) { proc = object!(pe.process) }
+      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    }
+    if is_object(parsed.process_kprobe) {
+      activity = 4
+      pe = object!(parsed.process_kprobe)
+      if is_object(pe.process) { proc = object!(pe.process) }
+      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    }
+    if is_object(parsed.process_tracepoint) {
+      activity = 4
+      pe = object!(parsed.process_tracepoint)
+      if is_object(pe.process) { proc = object!(pe.process) }
+      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    }
+
+    if is_object(proc.pod) { pod_obj = object!(proc.pod) }
+
+    .class_uid = 1007
+    .activity_id = activity
+    .severity_id = 1
+
+    t_str = to_string(parsed.time) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "Tetragon", "vendor_name": "Cilium"},
+      "version": "1.5.0",
+      "uid": to_string(proc.exec_id) ?? ""
+    }
+
+    .process = {
+      "pid": proc.pid,
+      "uid": proc.uid,
+      "tid": proc.tid,
+      "command_line": to_string(proc.arguments) ?? "",
+      "image": {
+        "file": {"path": to_string(proc.binary) ?? ""}
+      },
+      "file": {"path": to_string(proc.binary) ?? ""},
+      "cwd": proc.cwd,
+      "start_time": proc.start_time,
+      "auid": proc.auid,
+      "exec_id": proc.exec_id,
+      "parent": {
+        "pid": parent_proc.pid,
+        "uid": parent_proc.uid,
+        "command_line": to_string(parent_proc.arguments) ?? "",
+        "file": {"path": to_string(parent_proc.binary) ?? ""},
+        "exec_id": parent_proc.exec_id,
+        "start_time": parent_proc.start_time
+      }
+    }
+
+    .actor = {
+      "user": {"uid": proc.uid}
+    }
+
+    .device = {"hostname": node_name}
+
+    container = {}
+    if is_object(pod_obj.container) { container = object!(pod_obj.container) }
+
+    .k8s = {
+      "namespace": pod_obj.namespace,
+      "pod": pod_obj.name,
+      "workload": pod_obj.workload,
+      "labels": pod_obj.pod_labels,
+      "container": {
+        "id": container.id,
+        "name": container.name,
+        "image": container.image
+      }
+    }
+
+    # Extra fields for kprobe/tracepoint
+    if activity == 4 {
+      pe = parsed.process_kprobe
+      if !is_object(pe) { pe = parsed.process_tracepoint }
+      if is_object(pe) {
+        pem = object!(pe)
+        .function_name = pem.function_name
+        .args = pem.args
+        .policy_name = pem.policy_name
+        .action = pem.action
+      }
+    }
+    .status = parsed.status
+    .raw_data = parsed

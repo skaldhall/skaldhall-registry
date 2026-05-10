@@ -1,0 +1,11 @@
+# source: https://github.com/kubernetes/klog — kube-controller-manager uses klog native format
+I0512 13:00:01.123456       1 controllermanager.go:175] "Starting" controller="deployment"
+I0512 13:00:02.234567       1 deployment_controller.go:583] "Started syncing deployment" deployment="default/web" startTime="2024-05-12 13:00:02.234567 +0000 UTC"
+I0512 13:00:03.345678       1 replica_set.go:622] "Pod created" pod="default/web-7d8b9-abc" replicaSet="default/web-7d8b9"
+I0512 13:00:04.456789       1 event.go:307] "Event occurred" object="default/web" fieldPath="" kind="Deployment" apiVersion="apps/v1" type="Normal" reason="ScalingReplicaSet" message="Scaled up replica set web-7d8b9 to 3"
+W0512 13:01:00.567890       1 endpoints_controller.go:344] Service default/headless does not have a Selector, ignoring
+E0512 13:02:00.678901       1 horizontal.go:265] "Failed to compute desired number of replicas" err="failed to get cpu utilization: missing request for cpu" hpa="default/web-hpa"
+I0512 13:03:00.789012       1 garbagecollector.go:444] "Processing object" virtualObject="false" namespace="default" name="finalizer-xyz" uid="deadbeef-1234-5678-90ab-cdef12345678"
+I0512 13:04:00.890123       1 pv_controller.go:893] "claim worker queue length" length=0
+I0512 13:05:00.901234       1 node_lifecycle_controller.go:773] "Controller detected that some Nodes are Ready. Exiting master disruption mode."
+I0512 13:06:00.012345       1 namespace_controller.go:185] "Namespace finalize completed" namespace="old-ns"

@@ -1,0 +1,134 @@
+# Polaris audit findings
+sourceId: "polaris-finding"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2006
+description: "Polaris audit findings"
+sample: "{\"PolarisOutputVersion\":\"1.0\",\"AuditTime\":\"2024-08-12T13:00:00Z\",\"SourceType\":\"Path\",\"SourceName\":\"deployment.yaml\",\"DisplayName\":\"deployment.yaml\",\"ClusterInfo\":{\"Version\":\"unknown\",\"Nodes\":0,\"Pods\":0,\"Namespaces\":0,\"Controllers\":1},\"Results\":[{\"Name\":\"web\",\"Namespace\":\"prod\",\"Kind\":\"Deployment\",\"Results\":{},\"PodResult\":{\"Name\":\"\",\"Results\":{\"hostIPCSet\":{\"ID\":\"hostIPCSet\",\"Message\":\"Host IPC is not configured\",\"Success\":true,\"Severity\":\"danger\",\"Category\":\"Security\"},\"hostNetworkSet\":{\"ID\":\"ho"
+vrl: |
+    # Polaris audit -> OCSF 2006 Compliance Finding
+    # NOTE: nested Results[*].PodResult/ContainerResults each have many checks; we
+    # emit one record per input line with .count = number-of-failed-checks across
+    # all controllers, mapping the most-severe failed check we can find.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2006
+    .activity_id = 1
+    .metadata = {"product": {"name": "Polaris", "vendor_name": "Fairwinds"}, "version": "1.5.0"}
+
+    ts = parsed.AuditTime
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Walk Results[*] PodResult.Results + ContainerResults[*].Results to find
+    # the most severe failure. We can't easily flatten with map; use a
+    # fixed-depth scan and a worst-failure summary instead.
+    worst_sev = 0
+    worst_msg = ""
+    worst_id = ""
+    worst_cat = ""
+    fail_count = 0
+    total_count = 0
+
+    results_arr = []
+    if is_array(parsed.Results) { results_arr = array!(parsed.Results) }
+
+    for_each(results_arr) -> |_idx, ctrl| {
+      if is_object(ctrl) {
+        pod = ctrl.PodResult
+        if is_object(pod) {
+          pod_results = pod.Results
+          if is_object(pod_results) {
+            for_each(object!(pod_results)) -> |_k, v| {
+              if is_object(v) {
+                total_count = total_count + 1
+                success = v.Success
+                sev_s = downcase(to_string(v.Severity) ?? "")
+                sid = 1
+                if sev_s == "danger" { sid = 4 }
+                if sev_s == "warning" { sid = 3 }
+                if sev_s == "ignore" { sid = 1 }
+                if success == false {
+                  fail_count = fail_count + 1
+                  if sid > worst_sev {
+                    worst_sev = sid
+                    worst_msg = to_string(v.Message) ?? ""
+                    worst_id = to_string(v.ID) ?? ""
+                    worst_cat = to_string(v.Category) ?? ""
+                  }
+                }
+              }
+            }
+          }
+          cont_arr = pod.ContainerResults
+          if is_array(cont_arr) {
+            for_each(array!(cont_arr)) -> |_ci, c| {
+              if is_object(c) {
+                cres = c.Results
+                if is_object(cres) {
+                  for_each(object!(cres)) -> |_k2, v2| {
+                    if is_object(v2) {
+                      total_count = total_count + 1
+                      success2 = v2.Success
+                      sev_s2 = downcase(to_string(v2.Severity) ?? "")
+                      sid2 = 1
+                      if sev_s2 == "danger" { sid2 = 4 }
+                      if sev_s2 == "warning" { sid2 = 3 }
+                      if sev_s2 == "ignore" { sid2 = 1 }
+                      if success2 == false {
+                        fail_count = fail_count + 1
+                        if sid2 > worst_sev {
+                          worst_sev = sid2
+                          worst_msg = to_string(v2.Message) ?? ""
+                          worst_id = to_string(v2.ID) ?? ""
+                          worst_cat = to_string(v2.Category) ?? ""
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if worst_sev == 0 { worst_sev = 1 }
+    .severity_id = worst_sev
+    .count = total_count
+    .fail_count = fail_count
+
+    .status_id = 1
+    if fail_count > 0 { .status_id = 2 }
+
+    .finding_info = {
+      "title": worst_id,
+      "uid": worst_id,
+      "types": [worst_cat]
+    }
+    .message = worst_msg
+
+    .compliance = {
+      "standards": ["polaris"],
+      "category": worst_cat
+    }
+
+    # Resource: top-level audit target
+    .resource = {
+      "name": parsed.SourceName,
+      "type": parsed.SourceType,
+      "displayName": parsed.DisplayName
+    }
+
+    if is_object(parsed.ClusterInfo) { .cluster = parsed.ClusterInfo }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

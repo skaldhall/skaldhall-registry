@@ -1,0 +1,88 @@
+# NGINX Ingress access log (combined+ext)
+sourceId: "nginx-ingress-access"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 4002
+description: "NGINX Ingress access log (combined+ext)"
+sample: "192.168.1.10 - - [12/Aug/2024:13:00:00 +0000] \"GET /api/v1/users HTTP/1.1\" 200 1234 \"https://app.example.com/dashboard\" \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36\" 567 0.011 [prod-api-80] [] 10.244.1.27:8080 1234 0.011 200 e8f7d6c5b4a39281756abcdef0123456"
+vrl: |
+    # nginx-ingress access log -> OCSF 4002 HTTP Activity
+    src = .
+    parsed = parse_regex(.message, r'^(?P<remote>\S+)\s+-\s+(?P<user>\S+)\s+\[(?P<ts>[^\]]+)\]\s+"(?P<method>\S+)\s+(?P<uri>\S+)\s+(?P<proto>[^"]+)"\s+(?P<status>\d+)\s+(?P<bytes>\d+)\s+"(?P<ref>[^"]*)"\s+"(?P<ua>[^"]*)"(?:\s+(?P<reqlen>\d+)\s+(?P<reqtime>\S+)\s+\[(?P<proxy_upstream>[^\]]*)\]\s+\[(?P<proxy_alt>[^\]]*)\]\s+(?P<upstream_addr>\S+)\s+(?P<upstream_bytes>\S+)\s+(?P<upstream_time>\S+)\s+(?P<upstream_status>\S+)\s+(?P<reqid>\S+))?') ?? {}
+
+    . = {}
+    .class_uid = 4002
+    .metadata = {"product": {"name": "nginx-ingress", "vendor_name": "Kubernetes"}, "version": "1.5.0"}
+
+    # Time
+    ts_str = string(parsed.ts) ?? ""
+    parsed_ts = null
+    if ts_str != "" {
+      pt, perr = parse_timestamp(ts_str, "%d/%b/%Y:%H:%M:%S %z")
+      if perr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Method -> activity_id
+    method_raw = string(parsed.method) ?? ""
+    method = upcase(method_raw)
+    .activity_id = 0
+    if method == "GET"     { .activity_id = 1 }
+    if method == "HEAD"    { .activity_id = 2 }
+    if method == "POST"    { .activity_id = 3 }
+    if method == "PUT"     { .activity_id = 4 }
+    if method == "DELETE"  { .activity_id = 5 }
+    if method == "TRACE"   { .activity_id = 6 }
+    if method == "CONNECT" { .activity_id = 7 }
+    if method == "OPTIONS" { .activity_id = 8 }
+    if method == "PATCH"   { .activity_id = 9 }
+
+    # Status -> severity_id
+    status_int = to_int(parsed.status) ?? 0
+    sev = 1
+    if status_int >= 400 && status_int < 500 { sev = 3 }
+    if status_int >= 500 { sev = 4 }
+    .severity_id = sev
+    .status_code = status_int
+
+    # HTTP request
+    .http_request = {
+      "http_method": method,
+      "url": {"path": parsed.uri},
+      "user_agent": parsed.ua,
+      "referrer": parsed.ref,
+      "version": parsed.proto
+    }
+
+    # Source endpoint
+    .src_endpoint = {"ip": parsed.remote}
+
+    # User
+    user_str = string(parsed.user) ?? ""
+    if user_str != "-" && user_str != "" {
+      .actor = {"user": {"name": user_str}}
+    }
+
+    # Body bytes
+    bytes_int = to_int(parsed.bytes) ?? 0
+    .http_response = {
+      "code": status_int,
+      "length": bytes_int
+    }
+
+    # nginx-ingress extras
+    reqlen_int = to_int(parsed.reqlen) ?? 0
+    reqtime_f = to_float(parsed.reqtime) ?? 0.0
+    .request_id = parsed.reqid
+    .request_length = reqlen_int
+    .duration = reqtime_f
+    .upstream = {
+      "addr": parsed.upstream_addr,
+      "name": parsed.proxy_upstream,
+      "bytes": parsed.upstream_bytes,
+      "time": parsed.upstream_time,
+      "status": parsed.upstream_status
+    }
+    .raw_data = src.message

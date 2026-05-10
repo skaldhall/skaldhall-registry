@@ -1,0 +1,95 @@
+# Kubewarden audit log
+sourceId: "kubewarden-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "Kubewarden audit log"
+sample: "{\"apiVersion\":\"wgpolicyk8s.io/v1alpha2\",\"kind\":\"PolicyReport\",\"metadata\":{\"name\":\"82702633-0a9f-42b5-a9f4-b8eb58e46f03\",\"namespace\":\"default\",\"creationTimestamp\":\"2024-08-12T13:00:00Z\",\"labels\":{\"app.kubernetes.io/managed-by\":\"kubewarden\"}},\"scope\":{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"name\":\"nginx-deployment\",\"namespace\":\"default\",\"uid\":\"11111111-2222-3333-4444-555555555555\"},\"results\":[{\"policy\":\"namespaced-default-safe-labels\",\"result\":\"fail\",\"severity\":\"low\",\"category\":\"Best Practices"
+vrl: |
+    # Kubewarden audit-scanner PolicyReport -> OCSF 6003 API Activity
+    # (audit-scanner reviews policies; admission flow is API-call-shaped)
+    # NOTE: results[] may have multiple entries; we map first and stash count.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 6003
+    .activity_id = 3
+    .metadata = {"product": {"name": "Kubewarden", "vendor_name": "Kubewarden"}, "version": "1.5.0"}
+
+    results = []
+    if is_array(parsed.results) { results = array!(parsed.results) }
+    .count = length(results)
+
+    first = {}
+    if length(results) > 0 {
+      f = results[0]
+      if is_object(f) { first = object!(f) }
+    }
+
+    # Severity
+    sev_raw = to_string(first.severity) ?? ""
+    sev = downcase(sev_raw)
+    sev_id = 1
+    if sev == "critical" { sev_id = 5 }
+    if sev == "high" { sev_id = 4 }
+    if sev == "medium" { sev_id = 3 }
+    if sev == "low" { sev_id = 2 }
+    .severity_id = sev_id
+    .severity = sev
+
+    # Time
+    t_assigned = false
+    ts_secs = first.timestamp.seconds
+    if ts_secs != null {
+      ti = to_int(ts_secs) ?? 0
+      t, e = from_unix_timestamp(ti, unit: "seconds")
+      if e == null { .time = t; t_assigned = true }
+    }
+    if !t_assigned {
+      ct = parsed.metadata.creationTimestamp
+      if ct != null { .time = ct } else { .time = src.timestamp }
+    }
+    if .time == null { .time = now() }
+
+    # Status
+    res = to_string(first.result) ?? ""
+    .status = res
+    .status_id = 1
+    if res == "fail" || res == "error" { .status_id = 2 }
+
+    .api = {
+      "operation": "audit",
+      "service": {"name": "kubewarden-audit"}
+    }
+
+    .policy = {
+      "name": first.policy,
+      "category": first.category
+    }
+
+    .message = first.message
+
+    if is_object(parsed.scope) {
+      .resource = {
+        "name": parsed.scope.name,
+        "namespace": parsed.scope.namespace,
+        "uid": parsed.scope.uid,
+        "type": parsed.scope.kind
+      }
+    }
+
+    if is_object(parsed.summary) { .summary = parsed.summary }
+
+    .report = {
+      "name": parsed.metadata.name,
+      "namespace": parsed.metadata.namespace,
+      "kind": parsed.kind
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

@@ -1,0 +1,96 @@
+# Inspektor Gadget eBPF event JSONL
+sourceId: "inspektor-gadget"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 1007
+description: "Inspektor Gadget eBPF event JSONL"
+sample: "{\"timestamp\":\"2024-05-12T11:00:00.123456789Z\",\"timestamp_raw\":1715511600123456789,\"runtime\":{\"runtimeName\":\"containerd\",\"containerName\":\"app\",\"containerId\":\"abc123def456\",\"containerImageName\":\"docker.io/library/nginx:1.25\",\"containerImageDigest\":\"sha256:deadbeef\"},\"k8s\":{\"node\":\"node-1\",\"namespace\":\"default\",\"podName\":\"web-1\",\"containerName\":\"nginx\",\"hostnetwork\":false},\"mntns_id\":4026532567,\"pid\":12345,\"tid\":12345,\"ppid\":1,\"uid\":0,\"gid\":0,\"loginuid\":4294967295,\"sessionid\":0,\"comm\":\"sh\",\"pcomm\":"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    .class_uid = 1007
+    .activity_id = 1
+    .severity_id = 1
+
+    t_str = to_string(parsed.timestamp) ?? ""
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "Inspektor Gadget", "vendor_name": "Inspektor Gadget"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.timestamp_raw) ?? ""
+    }
+
+    # args may be array
+    args_arr = []
+    if is_array(parsed.args) { args_arr = array!(parsed.args) }
+    cmd_line = ""
+    if length(args_arr) > 0 {
+      cmd_line = join(args_arr, " ") ?? ""
+    }
+
+    binary_path = ""
+    if length(args_arr) > 0 {
+      first_a = args_arr[0]
+      binary_path = to_string(first_a) ?? ""
+    }
+
+    .process = {
+      "pid": parsed.pid,
+      "tid": parsed.tid,
+      "uid": parsed.uid,
+      "gid": parsed.gid,
+      "name": parsed.comm,
+      "command_line": cmd_line,
+      "cwd": parsed.cwd,
+      "file": {"path": binary_path},
+      "image": {"file": {"path": binary_path}},
+      "parent": {
+        "pid": parsed.ppid,
+        "name": parsed.pcomm
+      },
+      "session_uid": parsed.sessionid,
+      "login_uid": parsed.loginuid,
+      "mntns_id": parsed.mntns_id
+    }
+
+    .actor = {
+      "user": {
+        "name": parsed.user,
+        "uid": parsed.uid
+      }
+    }
+
+    runtime = {}
+    if is_object(parsed.runtime) { runtime = object!(parsed.runtime) }
+
+    k8s = {}
+    if is_object(parsed.k8s) { k8s = object!(parsed.k8s) }
+
+    .device = {"hostname": k8s.node}
+
+    .k8s = {
+      "node": k8s.node,
+      "namespace": k8s.namespace,
+      "pod": k8s.podName,
+      "container": {
+        "id": runtime.containerId,
+        "name": runtime.containerName,
+        "image": runtime.containerImageName,
+        "image_digest": runtime.containerImageDigest,
+        "runtime": runtime.runtimeName
+      }
+    }
+
+    .error = parsed.error
+    .raw_data = parsed

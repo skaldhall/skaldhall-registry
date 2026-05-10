@@ -1,0 +1,13 @@
+# source: https://docs.sigstore.dev/cosign/verifying/verify/ + https://github.com/sigstore/cosign/blob/main/cmd/cosign/cli/verify/verify.go
+Verification for gcr.io/distroless/base@sha256:abc1234567890fedcba1234567890abcdef1234567890abcdef1234567890ab --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - Existence of the claims in the transparency log was verified offline
+  - The signatures were verified against the specified public key
+[{"critical":{"identity":{"docker-reference":"gcr.io/distroless/base"},"image":{"docker-manifest-digest":"sha256:abc1234567890fedcba1234567890abcdef1234567890abcdef1234567890ab"},"type":"cosign container image signature"},"optional":{"Bundle":{"SignedEntryTimestamp":"MEUCIQ...","Payload":{"body":"eyJhcGlWZXJzaW9uIjoiMC4wLjEi...","integratedTime":1723460400,"logIndex":12345678,"logID":"c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"}}}}]
+{"level":"info","msg":"Verification succeeded","image":"gcr.io/distroless/base@sha256:abc1234567890fedcba1234567890abcdef1234567890abcdef1234567890ab","time":"2024-08-12T13:00:00Z"}
+{"level":"error","msg":"Error: no matching signatures: invalid signature when validating ASN.1 encoded signature","image":"registry.example.com/legacy/old-app:v0.1","time":"2024-08-12T13:01:00Z"}
+{"level":"error","msg":"Error: no signatures found for image","image":"docker.io/library/alpine:3.18","time":"2024-08-12T13:02:00Z"}
+{"level":"info","msg":"keyless verification","image":"ghcr.io/example/app@sha256:def4567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef","certificate_identity":"https://github.com/example/app/.github/workflows/release.yml@refs/tags/v1.0.0","certificate_issuer":"https://token.actions.githubusercontent.com","time":"2024-08-12T13:03:00Z"}
+Error: no matching signatures: invalid or missing annotation in claim: map[env:prod]
+main.go:62: error during command execution: no matching signatures

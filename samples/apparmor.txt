@@ -1,0 +1,9 @@
+# source: https://gitlab.com/apparmor/apparmor/-/wikis/AppArmor_Failures + https://www.kernel.org/doc/Documentation/admin-guide/LSM/apparmor.rst
+audit: type=1400 audit(1723460400.123:42): apparmor="DENIED" operation="open" profile="/usr/sbin/cupsd" name="/etc/shadow" pid=1234 comm="cupsd" requested_mask="r" denied_mask="r" fsuid=0 ouid=0
+audit: type=1400 audit(1723460401.234:43): apparmor="DENIED" operation="exec" profile="docker-default" name="/bin/nc" pid=2345 comm="bash" requested_mask="x" denied_mask="x" fsuid=0 ouid=0 target="docker-default//&unconfined"
+audit: type=1400 audit(1723460402.345:44): apparmor="ALLOWED" operation="open" profile="cri-containerd.apparmor.d" name="/proc/sys/kernel/random/uuid" pid=3456 comm="containerd" requested_mask="r" denied_mask="r" fsuid=0 ouid=0
+audit: type=1400 audit(1723460403.456:45): apparmor="DENIED" operation="capable" profile="snap.firefox.firefox" pid=4567 comm="firefox" capability=21 capname="sys_admin"
+audit: type=1400 audit(1723460404.567:46): apparmor="DENIED" operation="mknod" profile="docker-default" name="/dev/sda1" pid=5678 comm="mknod" requested_mask="c" denied_mask="c" fsuid=0 ouid=0
+audit: type=1400 audit(1723460405.678:47): apparmor="DENIED" operation="ptrace" profile="snap.code.code" pid=6789 comm="code" peer="unconfined" requested_mask="trace" denied_mask="trace"
+audit: type=1400 audit(1723460406.789:48): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-nginx" pid=7890 comm="apparmor_parser"
+audit: type=1400 audit(1723460407.890:49): apparmor="DENIED" operation="connect" profile="snap.discord.discord" pid=8901 comm="discord" family="inet" sock_type="stream" protocol=6 requested_mask="connect" denied_mask="connect" addr=10.0.0.1 port=445

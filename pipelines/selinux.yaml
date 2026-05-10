@@ -1,0 +1,98 @@
+# Linux kernel SELinux AVC audit
+sourceId: "selinux"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "kv"
+ocsfClass: 1007
+description: "Linux kernel SELinux AVC audit"
+sample: "audit: type=1300 audit(1723460400.123:8001): arch=c000003e syscall=2 success=no exit=-13 a0=7ffd5a3b1c40 a1=0 a2=0 a3=24 items=0 ppid=1234 pid=2345 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=2 comm=\"httpd\" exe=\"/usr/sbin/httpd\" subj=system_u:system_r:httpd_t:s0 key=(null)"
+vrl: |
+    # SELinux AVC kernel audit -> OCSF 1007 Process Activity / 1001 File Activity (by op)
+    src = .
+    raw = string(.message) ?? ""
+
+    # Strip kernel/audit prefix
+    header = parse_regex(raw, r'(?:kernel:\s*)?(?:audit:\s*)?type=(?P<type>\S+)\s+audit\((?P<epoch>\d+\.\d+):(?P<seq>\d+)\):\s*(?P<rest>.*)$') ?? {}
+    rest = string(header.rest) ?? ""
+    audit_type = string(header.type) ?? ""
+
+    # Time
+    epoch_str = string(header.epoch) ?? ""
+    parsed_ts = null
+    if epoch_str != "" {
+      ef = to_float(epoch_str) ?? 0.0
+      pt, terr = from_unix_timestamp(to_int(ef * 1000000.0), unit: "microseconds")
+      if terr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+
+    # AVC: parse "avc:  denied  { perm } for  pid=... key=val ..."
+    avc_match = parse_regex(rest, r'avc:\s+(?P<verdict>\w+)\s+\{\s+(?P<perm>[^}]+)\s+\}\s+for\s+(?P<kv>.*)$') ?? {}
+    kv_str = string(avc_match.kv) ?? rest
+    verdict = string(avc_match.verdict) ?? ""
+    perm = string(avc_match.perm) ?? ""
+
+    # Parse the k=v tail (handles double-quoted values)
+    kv = parse_key_value(kv_str, key_value_delimiter: "=", field_delimiter: " ", whitespace: "lenient") ?? {}
+
+    . = {}
+    .metadata = {"product": {"name": "SELinux", "vendor_name": "NSA/RedHat"}, "version": "1.5.0"}
+    .time = parsed_ts
+
+    # Activity / class by perm
+    class_uid = 1007  # default Process Activity
+    activity_id = 1
+    perm_l = downcase(perm)
+    if perm_l == "read"           { class_uid = 1001; activity_id = 2 }
+    if perm_l == "write"          { class_uid = 1001; activity_id = 3 }
+    if perm_l == "execute"        { class_uid = 1007; activity_id = 1 }
+    if perm_l == "open"           { class_uid = 1001; activity_id = 1 }
+    if perm_l == "unlink"         { class_uid = 1001; activity_id = 4 }
+    if perm_l == "name_connect"   { class_uid = 4001; activity_id = 1 }
+    if perm_l == "module_request" { class_uid = 6002; activity_id = 1 }
+    if perm_l == "ptrace"         { class_uid = 1007; activity_id = 4 }
+    if perm_l == "setsched"       { class_uid = 1007; activity_id = 1 }
+    .class_uid = class_uid
+    .activity_id = activity_id
+
+    # Severity & status: "denied" is high
+    sev = 1
+    status_id = 1
+    if verdict == "denied" { sev = 4; status_id = 2 }
+    if verdict == "granted" { sev = 1; status_id = 1 }
+    permissive_int = to_int(kv.permissive) ?? 0
+    if permissive_int == 1 { sev = 2 }
+    .severity_id = sev
+    .status_id = status_id
+    .status = verdict
+
+    # Process
+    .process = {
+      "pid": to_int(kv.pid) ?? 0,
+      "name": kv.comm
+    }
+
+    # File
+    .file = {
+      "name": kv.name,
+      "path": kv.name,
+      "type": kv.tclass
+    }
+
+    # SELinux specifics
+    .selinux = {
+      "verdict": verdict,
+      "permission": perm,
+      "scontext": kv.scontext,
+      "tcontext": kv.tcontext,
+      "tclass": kv.tclass,
+      "permissive": permissive_int,
+      "dev": kv.dev,
+      "ino": kv.ino,
+      "dest_port": to_int(kv.dest) ?? null,
+      "kmod": kv.kmod,
+      "audit_type": audit_type,
+      "event_id": header.seq
+    }
+
+    .raw_data = raw

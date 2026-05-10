@@ -1,0 +1,10 @@
+# source: https://docs.tigera.io/calico/latest/operations/troubleshoot/component-logs — Felix uses logrus-style square-bracket level format
+2018-08-10 07:32:28.642 [INFO][34] health.go 150: Overall health summary=&health.HealthReport{Live:true, Ready:true}
+2024-05-12 11:00:00.123 [INFO][45] int_dataplane.go 1234: Applying dataplane updates
+2024-05-12 11:00:01.234 [INFO][45] iptables.go 1029: Updating IP set ipsetID="cali40s:abcdef" numMembers=42
+2024-05-12 11:00:02.345 [WARNING][45] route_table.go 567: Failed to remove non-Calico route: route ip+net: no such process
+2024-05-12 11:00:05.456 [INFO][45] policy_resolver.go 200: Calculated tier policy filter rules tier="default" numRules=15
+2024-05-12 11:00:10.567 [ERROR][45] felix.go 879: Failed to connect to Typha err=dial tcp 10.96.50.50:5473: connect: connection refused
+2024-05-12 11:00:15.678 [INFO][45] endpoint_manager.go 567: Updating endpoint id=WorkloadEndpoint(node-1/k8s/default/web-1-eth0) status=up
+2024-05-12 11:00:20.789 [DEBUG][45] xdp_state.go 100: XDP refresh in-progress members=42
+2024-05-12 11:00:25.890 [INFO][45] summary.go 100: Summarising 5 dataplane reconciliation loops over 1m0s: avg=120ms longest=234ms (resync-routes-v4)

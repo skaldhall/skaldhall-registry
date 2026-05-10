@@ -1,0 +1,67 @@
+# Calico DNS logs
+sourceId: "calico-dns"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4003
+description: "Calico DNS logs"
+sample: "{\"start_time\":\"2023-05-29T19:00:05.488280546Z\",\"end_time\":\"2023-05-29T19:05:15.940597425Z\",\"type\":\"log\",\"count\":1,\"client_name\":\"-\",\"client_name_aggr\":\"compliance-benchmarker-*\",\"client_namespace\":\"tigera-compliance\",\"client_ip\":null,\"client_labels\":{\"app.kubernetes.io/name\":\"compliance-benchmarker\",\"controller-revision-hash\":\"559d4c4596\",\"k8s-app\":\"compliance-benchmarker\",\"pod-template-generation\":\"1\",\"projectcalico.org/namespace\":\"tigera-compliance\",\"projectcalico.org/orchestrator\":\"k8s\",\"proj"
+vrl: |
+    # Calico DNS log -> OCSF 4003 DNS Activity
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 4003
+    .metadata = {"product": {"name": "Calico", "vendor_name": "Tigera", "feature": {"name": "calico-dns"}}, "version": "1.5.0"}
+
+    t = parsed.end_time
+    if t == null { t = parsed.start_time }
+    if t == null { t = parsed."@timestamp" }
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    # rcode -> activity_id (1=Query, 2=Response). These are responses.
+    rcode = to_string(parsed.rcode) ?? ""
+    .activity_id = 2
+    .severity_id = 1
+    if rcode == "ServFail" || rcode == "Refused" { .severity_id = 3 }
+    if rcode == "NXDomain" { .severity_id = 2 }
+
+    .dns = {
+      "question": {
+        "name": parsed.qname,
+        "type": parsed.qtype,
+        "class": parsed.qclass
+      },
+      "response": {
+        "rcode": parsed.rcode,
+        "answers": parsed.rrsets
+      }
+    }
+
+    .src_endpoint = {
+      "ip": parsed.client_ip,
+      "name": parsed.client_name,
+      "namespace": parsed.client_namespace,
+      "labels": parsed.client_labels
+    }
+    .dst_endpoint = {
+      "servers": parsed.servers
+    }
+
+    .start_time = parsed.start_time
+    .end_time = parsed.end_time
+    .count = parsed.count
+    .latency_count = parsed.latency_count
+    .latency_mean = parsed.latency_mean
+    .latency_max = parsed.latency_max
+    .host_name = parsed.host
+    .client_name_aggr = parsed.client_name_aggr
+
+    .message = src.message

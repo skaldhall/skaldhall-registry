@@ -1,0 +1,70 @@
+# kubelet log (klog)
+sourceId: "kubelet"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "klog"
+ocsfClass: 6008
+description: "kubelet log (klog)"
+sample: "I0512 11:00:01.123456    1234 kubelet.go:2456] \"SyncLoop ADD\" source=\"api\" pods=[\"default/web-1\"]"
+vrl: |
+    src = .
+
+    # klog format: e.g. I0512 11:00:01.123456    1234 file.go:123] "msg" k=v ...
+    line = to_string(.message) ?? ""
+
+    mr, merr = parse_regex(line, r'^(?P<lvl>[IWEF])(?P<mmdd>\d{4}) (?P<time>\d{2}:\d{2}:\d{2}\.\d+)\s+(?P<pid>\d+)\s+(?P<file>\S+):(?P<lineno>\d+)\] (?P<msg>.*)$')
+    m = {}
+    if merr == null {
+      m = mr
+    }
+
+    . = {}
+
+    lvl_v, _ = get(m, ["lvl"])
+    mmdd_v, _ = get(m, ["mmdd"])
+    time_v, _ = get(m, ["time"])
+    pid_v, _ = get(m, ["pid"])
+    file_v, _ = get(m, ["file"])
+    lineno_v, _ = get(m, ["lineno"])
+    msg_v, _ = get(m, ["msg"])
+
+    lvl = to_string(lvl_v) ?? "I"
+    sev = 1
+    if lvl == "I" { sev = 1 }
+    if lvl == "W" { sev = 3 }
+    if lvl == "E" { sev = 4 }
+    if lvl == "F" { sev = 5 }
+
+    .class_uid = 6008
+    .activity_id = 0
+    .severity_id = sev
+
+    mmdd = to_string(mmdd_v) ?? ""
+    time_str = to_string(time_v) ?? ""
+    ts = now()
+    if mmdd != "" && time_str != "" {
+      yr = format_timestamp!(now(), format: "%Y")
+      composed = yr + "-" + slice!(mmdd, 0, 2) + "-" + slice!(mmdd, 2, 4) + "T" + time_str + "Z"
+      ts = parse_timestamp(composed, format: "%+") ?? now()
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "kubelet", "vendor_name": "Kubernetes"},
+      "version": "1.5.0",
+      "uid": ""
+    }
+
+    msg_str = to_string(msg_v) ?? ""
+    if msg_str == "" { msg_str = line }
+    .message = msg_str
+
+    .process = {
+      "pid": to_int(pid_v) ?? 0,
+      "name": "kubelet"
+    }
+    .log = {
+      "file": to_string(file_v) ?? "",
+      "line": to_int(lineno_v) ?? 0,
+      "level": lvl
+    }
+    .raw_data = line

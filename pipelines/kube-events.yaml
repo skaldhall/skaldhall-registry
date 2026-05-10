@@ -1,0 +1,107 @@
+# Kubernetes events.k8s.io v1.Event
+sourceId: "kube-events"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 7001
+description: "Kubernetes events.k8s.io v1.Event"
+sample: "{\"apiVersion\":\"v1\",\"count\":1,\"eventTime\":null,\"firstTimestamp\":\"2020-07-28T16:35:14Z\",\"involvedObject\":{\"apiVersion\":\"v1\",\"fieldPath\":\"spec.containers{busybox}\",\"kind\":\"Pod\",\"name\":\"busybox\",\"namespace\":\"default\",\"resourceVersion\":\"28987493\",\"uid\":\"1efb342a-737b-11e9-a6c5-42010a8a00ed\"},\"kind\":\"Event\",\"lastTimestamp\":\"2020-07-28T16:35:14Z\",\"message\":\"Started container\",\"metadata\":{\"creationTimestamp\":\"2020-07-28T16:35:14Z\",\"name\":\"busybox.1efb342a737b11e9\",\"namespace\":\"default\"},\"reason\":\"Starte"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    evt_type = to_string(parsed.type) ?? "Normal"
+    sev = 1
+    if evt_type == "Warning" { sev = 3 }
+    if evt_type == "Normal" { sev = 1 }
+
+    # Activity by reason
+    reason = to_string(parsed.reason) ?? ""
+    activity = 0
+    reason_l = downcase(reason)
+    if reason_l == "created" || reason_l == "scheduled" || reason_l == "started" || reason_l == "scalingreplicaset" || reason_l == "provisioningsucceeded" {
+      activity = 1
+    }
+    if reason_l == "killing" || reason_l == "deleted" {
+      activity = 4
+    }
+    if reason_l == "failed" || reason_l == "backoff" || reason_l == "oomkilling" || reason_l == "nodenotready" {
+      activity = 3
+    }
+
+    .class_uid = 7001
+    .activity_id = activity
+    .severity_id = sev
+
+    # Time: prefer eventTime, then lastTimestamp, then firstTimestamp
+    t_str = ""
+    if is_string(parsed.eventTime) { t_str = string!(parsed.eventTime) }
+    if t_str == "" {
+      if is_string(parsed.lastTimestamp) { t_str = string!(parsed.lastTimestamp) }
+    }
+    if t_str == "" {
+      if is_string(parsed.firstTimestamp) { t_str = string!(parsed.firstTimestamp) }
+    }
+    ts = parse_timestamp(t_str, format: "%+") ?? now()
+    .time = ts
+
+    meta = {}
+    if is_object(parsed.metadata) { meta = object!(parsed.metadata) }
+
+    involved = {}
+    if is_object(parsed.involvedObject) { involved = object!(parsed.involvedObject) }
+
+    source_obj = {}
+    if is_object(parsed.source) { source_obj = object!(parsed.source) }
+
+    .metadata = {
+      "product": {"name": "kube-events", "vendor_name": "Kubernetes"},
+      "version": "1.5.0",
+      "uid": to_string(meta.name) ?? ""
+    }
+
+    .entity = {
+      "type": involved.kind,
+      "name": involved.name,
+      "namespace": involved.namespace,
+      "uid": involved.uid,
+      "api_version": involved.apiVersion,
+      "field_path": involved.fieldPath,
+      "resource_version": involved.resourceVersion
+    }
+
+    .actor = {
+      "process": {
+        "name": source_obj.component
+      }
+    }
+
+    .device = {"hostname": source_obj.host}
+
+    .k8s = {
+      "namespace": involved.namespace,
+      "node": source_obj.host,
+      "kind": involved.kind,
+      "name": involved.name
+    }
+
+    .message = parsed.message
+    .reason = reason
+    .event_type = evt_type
+    .count = parsed.count
+    .first_timestamp = parsed.firstTimestamp
+    .last_timestamp = parsed.lastTimestamp
+    .event_time = parsed.eventTime
+    .reporting_component = parsed.reportingComponent
+    .reporting_instance = parsed.reportingInstance
+    .event_name = meta.name
+    .creation_timestamp = meta.creationTimestamp
+    .source_component = source_obj.component
+    .raw_data = parsed

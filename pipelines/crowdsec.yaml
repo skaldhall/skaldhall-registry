@@ -1,0 +1,58 @@
+# CrowdSec alerts/decisions
+sourceId: "crowdsec"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2004
+description: "CrowdSec alerts/decisions"
+sample: "{\"capacity\":5,\"decisions\":[{\"duration\":\"4h\",\"origin\":\"crowdsec\",\"scenario\":\"crowdsecurity/ssh-bf\",\"scope\":\"Ip\",\"type\":\"ban\",\"value\":\"35.188.49.176\"}],\"events_count\":6,\"scenario\":\"crowdsecurity/ssh-bf\",\"source\":{\"ip\":\"35.188.49.176\",\"scope\":\"Ip\",\"value\":\"35.188.49.176\",\"as_name\":\"Google LLC\",\"as_number\":\"15169\",\"cn\":\"US\",\"range\":\"35.184.0.0/13\"},\"start_at\":\"2023-04-12T08:30:01.123456Z\",\"stop_at\":\"2023-04-12T08:30:11.654321Z\",\"message\":\"Ip 35.188.49.176 performed 'crowdsecurity/ssh-bf' (6 events o"
+vrl: |
+    # CrowdSec alert/decision -> OCSF 2004 Detection Finding
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2004
+    .metadata = {"product": {"name": "CrowdSec", "vendor_name": "CrowdSec"}, "version": "1.5.0"}
+
+    t = parsed.stop_at
+    if t == null { t = parsed.start_at }
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    .activity_id = 1
+    .severity_id = 3
+    if parsed.simulated == true { .severity_id = 2 }
+    if parsed.remediation == true { .severity_id = 4 }
+
+    # Decisions
+    .decisions = parsed.decisions
+
+    # Source IP / actor
+    srcobj = {}
+    if is_object(parsed.source) { srcobj = object!(parsed.source) }
+    .src_endpoint = {
+      "ip": srcobj.ip,
+      "scope": srcobj.scope,
+      "as_name": srcobj.as_name,
+      "as_number": srcobj.as_number,
+      "country": srcobj.cn,
+      "range": srcobj.range
+    }
+
+    .finding = {
+      "title": parsed.scenario,
+      "events_count": parsed.events_count,
+      "capacity": parsed.capacity,
+      "remediation": parsed.remediation,
+      "simulated": parsed.simulated,
+      "start_at": parsed.start_at,
+      "stop_at": parsed.stop_at
+    }
+
+    .message = parsed.message

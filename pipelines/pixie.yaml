@@ -1,0 +1,68 @@
+# Pixie agent stdout / OTLP shape
+sourceId: "pixie"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6008
+description: "Pixie agent stdout / OTLP shape"
+sample: "{\"level\":\"info\",\"msg\":\"PEM started\",\"time\":\"2024-05-12T10:00:00.123456Z\",\"component\":\"pem\",\"node\":\"node-1\",\"version\":\"0.14.4\"}"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    .class_uid = 6008
+    .activity_id = 0
+
+    # Severity from level (logrus) or default
+    level = downcase(to_string(parsed.level) ?? "info")
+    sev = 1
+    if level == "debug" { sev = 0 }
+    if level == "info" { sev = 1 }
+    if level == "warn" || level == "warning" { sev = 3 }
+    if level == "error" { sev = 4 }
+    if level == "fatal" || level == "panic" { sev = 5 }
+
+    # OTLP-shaped events: resourceMetrics / resourceSpans → low severity informational
+    if is_array(parsed.resourceMetrics) || is_array(parsed.resourceSpans) {
+      sev = 1
+    }
+
+    .severity_id = sev
+
+    ts = now()
+    t_str = to_string(parsed.time) ?? ""
+    if t_str != "" {
+      ts = parse_timestamp(t_str, format: "%+") ?? now()
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "Pixie", "vendor_name": "Pixie"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.component) ?? ""
+    }
+
+    .message = to_string(parsed.msg) ?? ""
+
+    .component = parsed.component
+    .node = parsed.node
+    .version = parsed.version
+    .vizier_id = parsed.vizier_id
+    .table = parsed.table
+    .dropped = parsed.dropped
+    .script = parsed.script
+    .duration_ms = parsed.duration_ms
+    .endpoint = parsed.endpoint
+    .error = parsed.err
+
+    # OTLP envelopes
+    .resource_metrics = parsed.resourceMetrics
+    .resource_spans = parsed.resourceSpans
+    .raw_data = parsed

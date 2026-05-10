@@ -1,0 +1,130 @@
+# KubeArmor process/file/network alerts
+sourceId: "kubearmor"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 1007
+description: "KubeArmor process/file/network alerts"
+sample: "{\"ClusterName\":\"default\",\"HostName\":\"aks-agentpool-16128849-vmss000000\",\"NamespaceName\":\"default\",\"PodName\":\"vault-0\",\"Labels\":\"app.kubernetes.io/instance=vault,app.kubernetes.io/name=vault,component=server,helm.sh/chart=vault-0.24.1,statefulset.kubernetes.io/pod-name=vault-0\",\"ContainerID\":\"775fb27125ee8d9e2f34d6731fbf3bf677a1038f79fe8134856337612007d9ae\",\"ContainerName\":\"vault\",\"ContainerImage\":\"docker.io/hashicorp/vault:1.13.1@sha256:b888abc3fc0529550d4a6c87884419e86b8cb736fe556e3e717a6bc5088"
+vrl: |
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(string!(.message))
+      if err == null {
+        if is_object(ok) { parsed = object!(ok) }
+      }
+    }
+
+    . = {}
+
+    op = to_string(parsed.Operation) ?? ""
+    op_l = downcase(op)
+
+    class_uid = 1007
+    activity = 1
+    if op_l == "process" {
+      class_uid = 1007
+      activity = 1
+    }
+    if op_l == "file" {
+      class_uid = 1001
+      activity = 6
+    }
+    if op_l == "network" {
+      class_uid = 4001
+      activity = 6
+    }
+    if op_l == "syscall" {
+      class_uid = 1007
+      activity = 1
+    }
+
+    # Severity
+    sev_str = to_string(parsed.Severity) ?? ""
+    sev_int = to_int(sev_str) ?? 0
+    sev = 1
+    if sev_int >= 7 { sev = 4 }
+    if sev_int >= 5 && sev_int < 7 { sev = 3 }
+    if sev_int >= 3 && sev_int < 5 { sev = 2 }
+    if sev_int < 3 { sev = 1 }
+    if sev_int == 0 { sev = 1 }
+
+    # If Action=Block / Result=Permission denied → boost severity to 4
+    action = to_string(parsed.Action) ?? ""
+    result = to_string(parsed.Result) ?? ""
+    if action == "Block" { sev = 4 }
+    if result == "Permission denied" { sev = 4 }
+
+    .class_uid = class_uid
+    .activity_id = activity
+    .severity_id = sev
+
+    # Time: UpdatedTime preferred (RFC3339), Timestamp is unix
+    ts = now()
+    ut = to_string(parsed.UpdatedTime) ?? ""
+    if ut != "" {
+      ts = parse_timestamp(ut, format: "%+") ?? now()
+    } else {
+      uts = to_int(parsed.Timestamp) ?? 0
+      if uts > 0 {
+        ts = from_unix_timestamp(uts) ?? now()
+      }
+    }
+    .time = ts
+
+    .metadata = {
+      "product": {"name": "KubeArmor", "vendor_name": "AccuKnox"},
+      "version": "1.5.0",
+      "uid": to_string(parsed.PolicyName) ?? ""
+    }
+
+    .process = {
+      "pid": parsed.PID,
+      "uid": parsed.UID,
+      "host_pid": parsed.HostPID,
+      "name": parsed.ProcessName,
+      "file": {"path": parsed.ProcessName},
+      "image": {"file": {"path": parsed.ProcessName}},
+      "parent": {
+        "pid": parsed.PPID,
+        "name": parsed.ParentProcessName,
+        "host_pid": parsed.HostPPID
+      }
+    }
+
+    .actor = {
+      "user": {"uid": parsed.UID}
+    }
+
+    .device = {"hostname": parsed.HostName}
+
+    .k8s = {
+      "namespace": parsed.NamespaceName,
+      "pod": parsed.PodName,
+      "cluster": parsed.ClusterName,
+      "labels": parsed.Labels,
+      "container": {
+        "id": parsed.ContainerID,
+        "name": parsed.ContainerName,
+        "image": parsed.ContainerImage
+      }
+    }
+
+    # Class-specific resource
+    .resource = parsed.Resource
+    .operation = op
+    .policy_name = parsed.PolicyName
+    .policy_action = action
+    .result = result
+    .enforcer = parsed.Enforcer
+    .data = parsed.Data
+    .tags = parsed.ATags
+    .message = parsed.Message
+    .event_type = parsed.Type
+    .source = parsed.Source
+
+    # File class: route resource → .file.path
+    if class_uid == 1001 {
+      .file = {"path": parsed.Resource}
+    }
+    .raw_data = parsed

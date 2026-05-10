@@ -1,0 +1,99 @@
+# linkerd2-proxy structured tracing logs
+sourceId: "linkerd-proxy"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 4002
+description: "linkerd2-proxy structured tracing logs"
+sample: "[     0.001234s]  INFO ThreadId(01) linkerd2_proxy: release 2.219.0 (abcd123) by linkerd on 2024-07-01T12:00:00Z"
+vrl: |
+    # Linkerd2-proxy log -> OCSF 4002 HTTP Activity (tracing-subscriber fmt)
+    src = .
+    . = {}
+
+    .class_uid = 4002
+    .metadata = {"product": {"name": "linkerd2-proxy", "vendor_name": "Linkerd"}, "version": "1.5.0"}
+
+    raw = to_string(src.message) ?? ""
+
+    ts = null
+    .activity_id = 0
+    .severity_id = 1
+    level = ""
+    spans = ""
+    target = ""
+    msg = raw
+    uptime_s = null
+
+    m, e = parse_regex(raw, r'^\[\s*(?P<uptime>\d+\.\d+)s\]\s+(?P<level>\w+)\s+ThreadId\((?P<thread>\d+)\)\s+(?P<rest>.*)$')
+    if e == null {
+      level = m.level
+      rest = m.rest
+      uptime_s, _ = to_float(m.uptime)
+
+      # rest is "[spans:]target: msg" - target is last segment before final ":" before msg
+      # Try to split out target by matching "<spans? > <target>: <msg>" where target has no spaces and no '{'
+      rm, rerr = parse_regex(rest, r'^(?P<pre>.*?)\s*(?P<target>[A-Za-z_][\w:]+):\s+(?P<msg>.*)$')
+      if rerr == null {
+        spans = rm.pre
+        target = rm.target
+        msg = rm.msg
+      } else {
+        msg = rest
+      }
+    }
+
+    if level == "TRACE" { .severity_id = 1 }
+    if level == "DEBUG" { .severity_id = 1 }
+    if level == "INFO"  { .severity_id = 1; .activity_id = 1 }
+    if level == "WARN"  { .severity_id = 3; .activity_id = 1 }
+    if level == "ERROR" { .severity_id = 4; .activity_id = 2 }
+
+    ts = src.timestamp
+    if ts == null { ts = now() }
+    .time = ts
+
+    .level = level
+    .span = spans
+    .target = target
+    .uptime_s = uptime_s
+
+    # Try to extract HTTP status / client.addr from spans / msg.
+    status = 0
+    have_status = false
+    sm, serr = parse_regex(msg, r'status=(?P<s>\d+)')
+    if serr == null {
+      v, verr = to_int(sm.s)
+      if verr == null {
+        status = v
+        have_status = true
+      }
+    }
+    if have_status {
+      if status >= 500 { .severity_id = 4 }
+      if status >= 400 && status < 500 { .severity_id = 3 }
+    }
+
+    client_addr = ""
+    ca, caerr = parse_regex(spans, r'client\.addr=(?P<ip>[^\s:}]+)(?::(?P<port>\d+))?')
+    if caerr == null {
+      client_addr = ca.ip
+    }
+
+    # Extract upstream addr from outbound:proxy{addr=...}
+    ua = ""
+    uap = null
+    um, uerr = parse_regex(spans, r'addr=(?P<ip>[^\s:}]+)(?::(?P<port>\d+))?')
+    if uerr == null {
+      ua = um.ip
+      if um.port != "" {
+        p, _ = to_int(um.port)
+        uap = p
+      }
+    }
+
+    .src_endpoint = {"ip": client_addr}
+    .dst_endpoint = {"ip": ua, "port": uap}
+
+    .http_response = {"status_code": status}
+    .message = msg
+    .raw = raw

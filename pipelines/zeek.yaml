@@ -1,0 +1,119 @@
+# Zeek conn/dns/http JSON logs
+sourceId: "zeek"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 4001
+description: "Zeek conn/dns/http JSON logs"
+sample: "{\"ts\":1591367999.305988,\"uid\":\"CMdzit1AMNsmfAIiQc\",\"id.orig_h\":\"192.168.4.76\",\"id.orig_p\":36844,\"id.resp_h\":\"192.168.4.1\",\"id.resp_p\":53,\"proto\":\"udp\",\"service\":\"dns\",\"duration\":0.06685185432434082,\"orig_bytes\":62,\"resp_bytes\":141,\"conn_state\":\"SF\",\"missed_bytes\":0,\"history\":\"Dd\",\"orig_pkts\":2,\"orig_ip_bytes\":118,\"resp_pkts\":2,\"resp_ip_bytes\":197,\"ip_proto\":17}"
+vrl: |
+    # Zeek log -> OCSF (multi-class branch by record shape / _path)
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .metadata = {"product": {"name": "Zeek", "vendor_name": "Zeek"}, "version": "1.5.0"}
+
+    t = parsed.ts
+    if t == null { t = src.timestamp }
+    if t == null { t = now() }
+    .time = t
+
+    # Determine path: explicit _path wins; else infer from fields.
+    path = to_string(parsed._path) ?? ""
+    if path == "" {
+      if exists(parsed.method) || exists(parsed.uri) || exists(parsed.status_code) {
+        path = "http"
+      } else if exists(parsed.query) || exists(parsed.qtype_name) || exists(parsed.rcode_name) {
+        path = "dns"
+      } else if exists(parsed.conn_state) || exists(parsed.orig_ip_bytes) {
+        path = "conn"
+      }
+    }
+    .zeek_path = path
+
+    # Common 5-tuple
+    src_ep = {
+      "ip": parsed."id.orig_h",
+      "port": parsed."id.orig_p"
+    }
+    dst_ep = {
+      "ip": parsed."id.resp_h",
+      "port": parsed."id.resp_p"
+    }
+
+    .class_uid = 4001
+    .activity_id = 0
+    .severity_id = 1
+    .connection_info = {"protocol_name": parsed.proto, "service": parsed.service}
+
+    if path == "conn" {
+      .class_uid = 4001
+      state = to_string(parsed.conn_state) ?? ""
+      .activity_id = 1
+      if state == "SF" || state == "S1" || state == "RSTO" || state == "RSTR" { .activity_id = 2 }
+      if state == "REJ" { .activity_id = 5; .severity_id = 3 }
+      if state == "S0" { .severity_id = 2 }
+      .traffic = {
+        "bytes_in": parsed.resp_bytes,
+        "bytes_out": parsed.orig_bytes,
+        "packets_in": parsed.resp_pkts,
+        "packets_out": parsed.orig_pkts
+      }
+      .duration = parsed.duration
+      .conn_state = parsed.conn_state
+      .history = parsed.history
+      .missed_bytes = parsed.missed_bytes
+      .orig_ip_bytes = parsed.orig_ip_bytes
+      .resp_ip_bytes = parsed.resp_ip_bytes
+      .ip_proto = parsed.ip_proto
+      .local_orig = parsed.local_orig
+      .local_resp = parsed.local_resp
+    } else if path == "dns" {
+      .class_uid = 4003
+      qr = parsed.qtype_name
+      .activity_id = 1
+      if exists(parsed.answers) || exists(parsed.rcode_name) { .activity_id = 2 }
+      rc = to_string(parsed.rcode_name) ?? ""
+      if rc == "SERVFAIL" || rc == "REFUSED" { .severity_id = 3 }
+      .dns = {
+        "id": parsed.trans_id,
+        "question": {"name": parsed.query, "type": parsed.qtype_name, "class": parsed.qclass_name},
+        "response": {"rcode": parsed.rcode_name, "rcode_id": parsed.rcode, "answers": parsed.answers, "ttls": parsed.TTLs},
+        "flags": {"AA": parsed.AA, "TC": parsed.TC, "RD": parsed.RD, "RA": parsed.RA, "Z": parsed.Z, "rejected": parsed.rejected, "opcode": parsed.opcode_name}
+      }
+      .rtt = parsed.rtt
+    } else if path == "http" {
+      .class_uid = 4002
+      status, _ = to_int(parsed.status_code)
+      if status == null { status = 0 }
+      .activity_id = 1
+      if status >= 500 { .severity_id = 4 }
+      if status >= 400 && status < 500 { .severity_id = 3 }
+      if status >= 200 && status < 400 { .severity_id = 1 }
+      .http_request = {
+        "method": parsed.method,
+        "url": {"path": parsed.uri, "hostname": parsed.host},
+        "version": parsed.version,
+        "user_agent": parsed.user_agent,
+        "body_length": parsed.request_body_len
+      }
+      .http_response = {
+        "status_code": parsed.status_code,
+        "status_msg": parsed.status_msg,
+        "length": parsed.response_body_len,
+        "mime_types": parsed.resp_mime_types,
+        "fuids": parsed.resp_fuids
+      }
+      .trans_depth = parsed.trans_depth
+      .tags = parsed.tags
+    }
+
+    .src_endpoint = src_ep
+    .dst_endpoint = dst_ep
+    .uid = parsed.uid
+    .message = src.message

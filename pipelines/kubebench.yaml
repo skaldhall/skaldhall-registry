@@ -1,0 +1,120 @@
+# kube-bench CIS test results
+sourceId: "kubebench"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 2006
+description: "kube-bench CIS test results"
+sample: "{\"Controls\":[{\"id\":\"1\",\"version\":\"cis-1.23\",\"detected_version\":\"1.29\",\"text\":\"Master Node Security Configuration\",\"node_type\":\"master\",\"tests\":[{\"section\":\"1.1\",\"pass\":18,\"fail\":2,\"warn\":1,\"info\":0,\"desc\":\"Master Node Configuration Files\",\"results\":[{\"test_number\":\"1.1.1\",\"test_desc\":\"Ensure that the API server pod specification file permissions are set to 644 or more restrictive (Automated)\",\"status\":\"PASS\",\"scored\":true,\"actual_value\":\"permissions=600\",\"expected_result\":\"permissions has permis"
+vrl: |
+    # kube-bench CIS report -> OCSF 2006 Compliance Finding
+    # NOTE: Controls[*].tests[*].results[*] is a deeply nested array; we map the
+    # parent control + test summary, and pick the first FAIL test result as the
+    # representative finding (or first result if all pass). count = total results.
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 2006
+    .activity_id = 1
+    .metadata = {"product": {"name": "kube-bench", "vendor_name": "Aqua Security"}, "version": "1.5.0"}
+
+    ts = src.timestamp
+    if ts == null { ts = now() }
+    .time = ts
+
+    ctrls = []
+    if is_array(parsed.Controls) { ctrls = array!(parsed.Controls) }
+
+    # Find first FAIL across the tree, also count totals
+    fail_count = 0
+    warn_count = 0
+    total = 0
+    first_fail = {}
+    first_any = {}
+    ctrl_meta = {}
+    test_meta = {}
+
+    for_each(ctrls) -> |_ci, c| {
+      if is_object(c) {
+        co = object!(c)
+        tests = co.tests
+        if is_array(tests) {
+          for_each(array!(tests)) -> |_ti, t| {
+            if is_object(t) {
+              to = object!(t)
+              rs = to.results
+              if is_array(rs) {
+                for_each(array!(rs)) -> |_ri, r| {
+                  if is_object(r) {
+                    ro = object!(r)
+                    total = total + 1
+                    st = ro.status
+                    if length(keys(first_any)) == 0 {
+                      first_any = ro
+                      ctrl_meta = co
+                      test_meta = to
+                    }
+                    if st == "FAIL" {
+                      fail_count = fail_count + 1
+                      if length(keys(first_fail)) == 0 {
+                        first_fail = ro
+                        ctrl_meta = co
+                        test_meta = to
+                      }
+                    }
+                    if st == "WARN" { warn_count = warn_count + 1 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    pick = first_fail
+    if length(keys(pick)) == 0 { pick = first_any }
+
+    .count = total
+    .fail_count = fail_count
+    .warn_count = warn_count
+
+    # Severity / status by chosen result status
+    status = pick.status
+    sev_id = 1
+    status_id = 1
+    if status == "FAIL" { sev_id = 4; status_id = 2 }
+    if status == "WARN" { sev_id = 3; status_id = 2 }
+    if status == "INFO" { sev_id = 1 }
+    .severity_id = sev_id
+    .status_id = status_id
+    .status = status
+
+    .finding_info = {
+      "title": pick.test_desc,
+      "uid": pick.test_number,
+      "types": [test_meta.desc]
+    }
+
+    .compliance = {
+      "standards": [ctrl_meta.version],
+      "control": pick.test_number,
+      "section": test_meta.section,
+      "node_type": ctrl_meta.node_type,
+      "detected_version": ctrl_meta.detected_version,
+      "expected": pick.expected_result,
+      "actual": pick.actual_value,
+      "remediation": pick.remediation,
+      "scored": pick.scored
+    }
+
+    .message = pick.test_desc
+
+    if is_object(parsed.totals) { .summary = parsed.totals }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

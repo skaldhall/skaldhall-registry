@@ -1,0 +1,52 @@
+# Calico Felix log
+sourceId: "calico-felix"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 6008
+description: "Calico Felix log"
+sample: "2018-08-10 07:32:28.642 [INFO][34] health.go 150: Overall health summary=&health.HealthReport{Live:true, Ready:true}"
+vrl: |
+    # Calico Felix log (logrus square-bracket) -> OCSF 6008 Application Error / Activity
+    src = .
+    . = {}
+
+    .class_uid = 6008
+    .metadata = {"product": {"name": "Felix", "vendor_name": "Calico", "feature": {"name": "calico-felix"}}, "version": "1.5.0"}
+
+    raw = to_string(src.message) ?? ""
+
+    # Parse logrus-style: "YYYY-MM-DD HH:MM:SS.fff [LEVEL][PID] file.go LINE: message"
+    ts = null
+    level = ""
+    file = ""
+    lineno = null
+    msg = raw
+
+    m, e = parse_regex(raw, r'^(?P<ts>\S+ \S+) \[(?P<level>[A-Z]+)\]\[(?P<pid>\d+)\] (?P<file>\S+) (?P<line>\d+): (?P<msg>.*)$')
+    if e == null {
+      level = m.level
+      file = m.file
+      lineno, _ = to_int(m.line)
+      msg = m.msg
+      parsed_ts, terr = parse_timestamp(m.ts, "%Y-%m-%d %H:%M:%S%.f")
+      if terr == null { ts = parsed_ts }
+    }
+
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    .level = level
+    .activity_id = 0
+    .severity_id = 1
+    if level == "DEBUG"   { .severity_id = 1; .activity_id = 1 }
+    if level == "INFO"    { .severity_id = 1; .activity_id = 1 }
+    if level == "WARNING" { .severity_id = 3; .activity_id = 1 }
+    if level == "WARN"    { .severity_id = 3; .activity_id = 1 }
+    if level == "ERROR"   { .severity_id = 4; .activity_id = 2 }
+    if level == "FATAL"   { .severity_id = 5; .activity_id = 2 }
+
+    .message = msg
+    .file_name = file
+    .line_number = lineno
+    .raw = raw

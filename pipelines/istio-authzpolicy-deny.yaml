@@ -1,0 +1,127 @@
+# Istio AuthorizationPolicy deny / RBAC denied
+sourceId: "istio-authzpolicy-deny"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 3005
+description: "Istio AuthorizationPolicy deny / RBAC denied"
+sample: "[2024-08-12T10:24:01.001Z] \"GET /admin/users HTTP/1.1\" 403 - rbac_access_denied_matched_policy[ns[default]-policy[deny-admin]-rule[0]] - \"-\" 0 19 1 - \"-\" \"curl/8.0.1\" \"11111111-2222-3333-4444-555555555555\" \"httpbin.foo.svc.cluster.local:8000\" \"-\" inbound|8000|| - 10.244.1.10:8000 10.244.0.20:48800 - -"
+vrl: |
+    # Istio AuthorizationPolicy deny -> OCSF 3005 Authorization
+    src = .
+    parsed = {}
+    is_json = false
+    if is_string(.message) {
+      msg_str = string!(.message)
+      ok, err = parse_json(msg_str)
+      if err == null && is_object(ok) {
+        parsed = object!(ok)
+        is_json = true
+      }
+    }
+
+    . = {}
+
+    .class_uid = 3005
+    .metadata = {"product": {"name": "Istio", "vendor_name": "Istio", "feature": {"name": "rbac"}}, "version": "1.5.0"}
+
+    ts = null
+    method = ""
+    path = ""
+    proto = ""
+    status = 0
+    ua = ""
+    xff = ""
+    authority = ""
+    request_id = ""
+    details = ""
+    downstream_local = ""
+    downstream_remote = ""
+    upstream_cluster = ""
+
+    if is_json {
+      ts = parsed.start_time
+      method = to_string(parsed.method) ?? ""
+      path = to_string(parsed.path) ?? ""
+      proto = to_string(parsed.protocol) ?? ""
+      s, _ = to_int(parsed.response_code)
+      if s != null { status = s }
+      ua = to_string(parsed.user_agent) ?? ""
+      xff = to_string(parsed.x_forwarded_for) ?? ""
+      authority = to_string(parsed.authority) ?? ""
+      request_id = to_string(parsed.request_id) ?? ""
+      details = to_string(parsed.response_code_details) ?? ""
+      downstream_local = to_string(parsed.downstream_local_address) ?? ""
+      downstream_remote = to_string(parsed.downstream_remote_address) ?? ""
+      upstream_cluster = to_string(parsed.upstream_cluster) ?? ""
+    } else {
+      raw = to_string(src.message) ?? ""
+      m, e = parse_regex(raw, r'^\[(?P<ts>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<proto>[^"]+)" (?P<status>\d+) \S+ (?P<details>\S+) \S+ "(?P<xff>[^"]*)" \d+ \d+ \d+ \S+ "[^"]*" "(?P<ua>[^"]*)" "(?P<rid>[^"]*)" "(?P<authority>[^"]*)" "[^"]*" (?P<ucluster>\S+) \S+ (?P<dlocal>\S+) (?P<dremote>\S+)')
+      if e == null {
+        parsed_ts, terr = parse_timestamp(m.ts, "%+")
+        if terr == null { ts = parsed_ts }
+        method = m.method
+        path = m.path
+        proto = m.proto
+        s, _ = to_int(m.status)
+        if s != null { status = s }
+        ua = m.ua
+        xff = m.xff
+        authority = m.authority
+        request_id = m.rid
+        details = m.details
+        downstream_local = m.dlocal
+        downstream_remote = m.dremote
+        upstream_cluster = m.ucluster
+      }
+    }
+
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Activity 3 = Deny (per OCSF Authorization activity_id)
+    .activity_id = 3
+    .severity_id = 3
+    if status >= 500 { .severity_id = 4 }
+
+    # Parse policy from details: rbac_access_denied_matched_policy[ns[<ns>]-policy[<name>]-rule[<r>]]
+    policy_ns = ""
+    policy_name = ""
+    policy_rule = ""
+    pm, perr = parse_regex(details, r'ns\[(?P<ns>[^\]]+)\]-policy\[(?P<name>[^\]]+)\]-rule\[(?P<rule>[^\]]+)\]')
+    if perr == null {
+      policy_ns = pm.ns
+      policy_name = pm.name
+      policy_rule = pm.rule
+    }
+
+    .policy = {
+      "namespace": policy_ns,
+      "name": policy_name,
+      "rule": policy_rule,
+      "details": details
+    }
+
+    xip = xff
+    if xip == "" || xip == "-" {
+      if downstream_remote != "" {
+        parts = split!(downstream_remote, ":")
+        if length(parts) >= 1 { xip = parts[0] }
+      }
+    }
+
+    .src_endpoint = {"ip": xip, "downstream_remote": downstream_remote}
+    .dst_endpoint = {"downstream_local": downstream_local, "upstream_cluster": upstream_cluster, "authority": authority}
+
+    .http_request = {
+      "method": method,
+      "url": {"path": path, "hostname": authority},
+      "version": proto,
+      "user_agent": ua,
+      "uid": request_id
+    }
+    .http_response = {"status_code": status}
+
+    .status = "deny"
+    .status_id = 2
+    .message = src.message

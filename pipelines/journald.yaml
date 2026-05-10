@@ -1,0 +1,80 @@
+# systemd journald entries
+sourceId: "journald"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 6008
+description: "systemd journald entries"
+sample: "{\"__CURSOR\":\"s=abc123def4567890;i=1234;b=fedcba9876543210;m=1234567;t=000615b9c3e4f1a2;x=abcdef1234567890\",\"__REALTIME_TIMESTAMP\":\"1723460400123456\",\"__MONOTONIC_TIMESTAMP\":\"19088743\",\"_BOOT_ID\":\"fedcba9876543210fedcba9876543210\",\"_MACHINE_ID\":\"1234567890abcdef1234567890abcdef\",\"_HOSTNAME\":\"node-01\",\"PRIORITY\":\"6\",\"_UID\":\"0\",\"_GID\":\"0\",\"_SYSTEMD_SLICE\":\"system.slice\",\"_TRANSPORT\":\"stdout\",\"_COMM\":\"sshd\",\"_EXE\":\"/usr/sbin/sshd\",\"_CMDLINE\":\"sshd: alice [priv]\",\"_SYSTEMD_CGROUP\":\"/system.slice/ssh."
+vrl: |
+    # systemd-journald JSON export -> OCSF 6008 Application Error
+    src = .
+    parsed = parse_json(string(.message) ?? "") ?? {}
+
+    . = {}
+    .class_uid = 6008
+    .metadata = {"product": {"name": "systemd-journald", "vendor_name": "systemd"}, "version": "1.5.0"}
+
+    # Time from __REALTIME_TIMESTAMP (microseconds since epoch)
+    parsed_ts = null
+    rt_str = string(parsed.__REALTIME_TIMESTAMP) ?? ""
+    if rt_str != "" {
+      rt_us = to_int(rt_str) ?? 0
+      if rt_us > 0 {
+        pt, terr = from_unix_timestamp(rt_us, unit: "microseconds")
+        if terr == null { parsed_ts = pt }
+      }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Map syslog priority -> severity_id
+    prio = to_int(parsed.PRIORITY) ?? 6
+    sev = 1
+    if prio == 0 { sev = 6 }  # emerg
+    if prio == 1 { sev = 6 }  # alert
+    if prio == 2 { sev = 5 }  # crit
+    if prio == 3 { sev = 4 }  # err
+    if prio == 4 { sev = 3 }  # warning
+    if prio == 5 { sev = 2 }  # notice
+    if prio == 6 { sev = 1 }  # info
+    if prio == 7 { sev = 1 }  # debug
+    .severity_id = sev
+    .severity = "p" + to_string(prio)
+
+    .activity_id = 1
+
+    # Message
+    .message = parsed.MESSAGE
+    .raw_data = src.message
+
+    # Host
+    .device = {"hostname": parsed._HOSTNAME, "uid": parsed._MACHINE_ID}
+
+    # Process
+    .process = {
+      "pid": to_int(parsed._PID) ?? 0,
+      "name": parsed._COMM,
+      "file": {"path": parsed._EXE},
+      "cmd_line": parsed._CMDLINE
+    }
+
+    # Actor
+    .actor = {
+      "user": {
+        "uid": to_int(parsed._UID) ?? null,
+        "gid": to_int(parsed._GID) ?? null
+      }
+    }
+
+    # Systemd context
+    .systemd = {
+      "unit": parsed._SYSTEMD_UNIT,
+      "slice": parsed._SYSTEMD_SLICE,
+      "cgroup": parsed._SYSTEMD_CGROUP,
+      "transport": parsed._TRANSPORT,
+      "boot_id": parsed._BOOT_ID,
+      "syslog_identifier": parsed.SYSLOG_IDENTIFIER,
+      "kernel_subsystem": parsed._KERNEL_SUBSYSTEM,
+      "cursor": parsed.__CURSOR
+    }

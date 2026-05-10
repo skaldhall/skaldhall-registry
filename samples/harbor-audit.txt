@@ -1,0 +1,9 @@
+# source: https://goharbor.io/docs/2.13.0/administration/audit-log/ + https://github.com/goharbor/harbor/blob/main/src/pkg/audit/model/audit_log.go
+{"id":1001,"project_id":3,"operation":"create","resource_type":"artifact","resource":"library/nginx:1.25","username":"admin","op_time":"2024-08-12T13:00:00Z","ip":"10.0.5.12"}
+{"id":1002,"project_id":3,"operation":"pull","resource_type":"artifact","resource":"library/nginx@sha256:abc1234567890fedcba1234567890abcdef1234567890abcdef1234567890ab","username":"robot$ci-runner","op_time":"2024-08-12T13:00:01Z","ip":"10.0.6.7"}
+{"id":1003,"project_id":5,"operation":"delete","resource_type":"artifact","resource":"shop/orders:v1.0.0","username":"alice","op_time":"2024-08-12T13:00:02Z","ip":"203.0.113.10","operation_description":"deleted by user via UI"}
+{"id":1004,"project_id":3,"operation":"login","resource_type":"user","resource":"admin","username":"admin","op_time":"2024-08-12T13:00:03Z","ip":"10.0.5.12"}
+{"id":1005,"project_id":5,"operation":"create","resource_type":"project","resource":"shop","username":"alice","op_time":"2024-08-12T13:00:04Z","ip":"203.0.113.10"}
+{"id":1006,"project_id":3,"operation":"update","resource_type":"configuration","resource":"vulnerability_scan","username":"admin","op_time":"2024-08-12T13:00:05Z","ip":"10.0.5.12","operation_description":"enabled scan_on_push"}
+{"id":1007,"project_id":5,"operation":"create","resource_type":"webhook","resource":"shop/policy/scan-failed","username":"alice","op_time":"2024-08-12T13:00:06Z","ip":"203.0.113.10"}
+{"id":1008,"project_id":3,"operation":"login_failed","resource_type":"user","resource":"unknown_user","username":"unknown_user","op_time":"2024-08-12T13:00:07Z","ip":"198.51.100.42","operation_description":"invalid credentials"}

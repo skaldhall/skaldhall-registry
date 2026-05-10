@@ -1,0 +1,82 @@
+# HAProxy httplog
+sourceId: "haproxy"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 4002
+description: "HAProxy httplog"
+sample: "Aug 12 13:00:00 lb1 haproxy[1234]: 10.0.5.12:51220 [12/Aug/2024:13:00:00.123] frontend-https~ backend-app/web1 0/0/1/10/11 200 1456 - - ---- 12/12/0/1/0 0/0 \"GET /api/v1/users HTTP/1.1\""
+vrl: |
+    # HAProxy httplog -> OCSF 4002 HTTP Activity
+    src = .
+    # Default httplog format:
+    # <syslog_prefix> <client_ip>:<client_port> [<request_date>] <frontend>~ <backend>/<server> <Tq>/<Tw>/<Tc>/<Tr>/<Tt> <status> <bytes> - - <flags> <act>/<fe>/<be>/<srv>/<retries> <srv_q>/<bk_q> "<method> <uri> <proto>"
+    parsed = parse_regex(.message, r'haproxy\[(?P<pid>\d+)\]:\s+(?P<client_ip>\S+?):(?P<client_port>\d+)\s+\[(?P<req_date>[^\]]+)\]\s+(?P<frontend>\S+)\s+(?P<backend>\S+?)/(?P<server>\S+)\s+(?P<times>\S+)\s+(?P<status>\d+)\s+(?P<bytes>\d+)\s+\S+\s+\S+\s+(?P<flags>\S+)\s+(?P<conns>\S+)\s+(?P<queue>\S+)\s+"(?P<method>\S+)\s+(?P<uri>\S+)\s+(?P<proto>[^"]+)"') ?? {}
+
+    . = {}
+    .class_uid = 4002
+    .metadata = {"product": {"name": "HAProxy", "vendor_name": "HAProxy"}, "version": "1.5.0"}
+
+    # Time
+    ts_str = string(parsed.req_date) ?? ""
+    parsed_ts = null
+    if ts_str != "" {
+      pt, perr = parse_timestamp(ts_str, "%d/%b/%Y:%H:%M:%S%.3f")
+      if perr == null { parsed_ts = pt }
+    }
+    if parsed_ts == null { parsed_ts = src.timestamp }
+    if parsed_ts == null { parsed_ts = now() }
+    .time = parsed_ts
+
+    # Method -> activity_id
+    method = upcase(string(parsed.method) ?? "")
+    .activity_id = 0
+    if method == "GET"     { .activity_id = 1 }
+    if method == "HEAD"    { .activity_id = 2 }
+    if method == "POST"    { .activity_id = 3 }
+    if method == "PUT"     { .activity_id = 4 }
+    if method == "DELETE"  { .activity_id = 5 }
+    if method == "TRACE"   { .activity_id = 6 }
+    if method == "CONNECT" { .activity_id = 7 }
+    if method == "OPTIONS" { .activity_id = 8 }
+    if method == "PATCH"   { .activity_id = 9 }
+
+    # Status -> severity
+    status_int = to_int(parsed.status) ?? 0
+    sev = 1
+    if status_int >= 400 && status_int < 500 { sev = 3 }
+    if status_int >= 500 { sev = 4 }
+    .severity_id = sev
+    .status_code = status_int
+
+    # HTTP request
+    .http_request = {
+      "http_method": method,
+      "url": {"path": parsed.uri},
+      "version": parsed.proto
+    }
+
+    # Source endpoint
+    client_port = to_int(parsed.client_port) ?? 0
+    .src_endpoint = {
+      "ip": parsed.client_ip,
+      "port": client_port
+    }
+
+    # HAProxy specific - frontend/backend/server
+    .frontend = parsed.frontend
+    .backend = parsed.backend
+    .server = parsed.server
+    .flags = parsed.flags
+    .times = parsed.times
+    .conns = parsed.conns
+    .queue = parsed.queue
+
+    # Response
+    bytes_int = to_int(parsed.bytes) ?? 0
+    .http_response = {
+      "code": status_int,
+      "length": bytes_int
+    }
+
+    .process = {"pid": to_int(parsed.pid) ?? 0, "name": "haproxy"}
+    .raw_data = src.message

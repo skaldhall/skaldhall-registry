@@ -1,0 +1,76 @@
+# Harbor registry audit log
+sourceId: "harbor-audit"
+fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+family: "json"
+ocsfClass: 6003
+description: "Harbor registry audit log"
+sample: "{\"id\":1001,\"project_id\":3,\"operation\":\"create\",\"resource_type\":\"artifact\",\"resource\":\"library/nginx:1.25\",\"username\":\"admin\",\"op_time\":\"2024-08-12T13:00:00Z\",\"ip\":\"10.0.5.12\"}"
+vrl: |
+    # Harbor audit log -> OCSF 6003 API Activity
+    src = .
+    parsed = {}
+    if is_string(.message) {
+      ok, err = parse_json(.message)
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+
+    . = {}
+
+    .class_uid = 6003
+    .metadata = {"product": {"name": "Harbor", "vendor_name": "Harbor"}, "version": "1.5.0"}
+
+    # Time
+    ts = parsed.op_time
+    if ts == null { ts = src.timestamp }
+    if ts == null { ts = now() }
+    .time = ts
+
+    # Operation -> activity_id (1=Create 2=Read 3=Update 4=Delete 6=Other)
+    op_raw = parsed.operation
+    op = ""
+    if is_string(op_raw) { op = downcase(string!(op_raw)) }
+    aid = 6
+    sid = 1
+    ssid = 1
+    if op == "create" { aid = 1 }
+    if op == "read" || op == "pull" { aid = 2 }
+    if op == "update" { aid = 3 }
+    if op == "delete" { aid = 4; sid = 3 }
+    if op == "login" { aid = 6 }
+    if op == "login_failed" { aid = 6; sid = 3; ssid = 2 }
+    .activity_id = aid
+    .severity_id = sid
+    .status_id = ssid
+
+    .api = {
+      "operation": op,
+      "service": {"name": "harbor"},
+      "request": {"uid": parsed.id}
+    }
+
+    # Resource
+    .resource = {
+      "type": parsed.resource_type,
+      "name": parsed.resource,
+      "project_id": parsed.project_id
+    }
+
+    # Actor
+    .actor = {
+      "user": {"name": parsed.username}
+    }
+
+    # Source endpoint
+    ip_raw = parsed.ip
+    if ip_raw != null {
+      .src_endpoint = {"ip": ip_raw}
+    }
+
+    .message = parsed.operation_description
+
+    .audit = {
+      "id": parsed.id,
+      "project_id": parsed.project_id
+    }
+
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }
