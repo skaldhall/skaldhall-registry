@@ -1,70 +1,105 @@
-# Zeek conn/dns/http JSON logs
+# Zeek network-monitor JSON logs (conn/dns/http/ssl/ssh/ftp/smtp/dhcp/ntp/rdp/smb/files/tunnel/kerberos/weird/notice)
 sourceId: "zeek"
 fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
 family: "json"
-ocsfClass: 4001
-description: "Zeek conn/dns/http JSON logs"
+ocsfClass: 4001           # PRIMARY/identity class (pipeline identity + default index)
+emits: [4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 4013, 4014, 3002, 2004] # every class this VRL can emit; the operator pre-creates
+                          # an index template for each and routes each OUTPUT record
+                          # by the .class_uid the VRL sets on it.
+description: "Zeek network-monitor JSON logs -> OCSF (16 analyzers, multi-class)"
 sample: "{\"ts\":1591367999.305988,\"uid\":\"CMdzit1AMNsmfAIiQc\",\"id.orig_h\":\"192.168.4.76\",\"id.orig_p\":36844,\"id.resp_h\":\"192.168.4.1\",\"id.resp_p\":53,\"proto\":\"udp\",\"service\":\"dns\",\"duration\":0.06685185432434082,\"orig_bytes\":62,\"resp_bytes\":141,\"conn_state\":\"SF\",\"missed_bytes\":0,\"history\":\"Dd\",\"orig_pkts\":2,\"orig_ip_bytes\":118,\"resp_pkts\":2,\"resp_ip_bytes\":197,\"ip_proto\":17}"
 vrl: |
-    # Zeek log -> OCSF (multi-class branch by record shape / _path)
+    # Zeek JSON log -> OCSF. ONE source, THREE classes:
+    #   conn -> 4001 Network Activity | http -> 4002 HTTP Activity | dns -> 4003 DNS Activity
+    # The operator routes each OUTPUT record by the .class_uid set below, so
+    # `emits:` above must list every class reachable here. An unrecognised zeek
+    # log (ssl, files, notice, ...) falls back to 4001/Traffic — the emitted set
+    # stays closed over `emits`, never an undeclared class.
     src = .
     parsed = {}
     if is_string(.message) {
-      ok, err = parse_json(.message)
+      ok, err = parse_json(string!(.message))
       if err == null && is_object(ok) { parsed = object!(ok) }
     }
 
     . = {}
 
-    .metadata = {"product": {"name": "Zeek", "vendor_name": "Zeek"}, "version": "1.5.0"}
+    # ── time ────────────────────────────────────────────────────────────────
+    # Zeek `ts` is a FLOAT unix epoch (seconds.micros). It MUST become a real
+    # timestamp: the index template maps `time` as an ES `date`, where a bare
+    # number is read as epoch MILLIS — 1591367999.305988 would land in Jan 1970.
+    ts_out = null
+    tsf = to_float(parsed.ts) ?? 0.0
+    if tsf > 0.0 {
+      pt, terr = from_unix_timestamp(to_int(tsf * 1000000.0), unit: "microseconds")
+      if terr == null { ts_out = pt }
+    }
+    if ts_out == null { ts_out = src.timestamp }
+    if ts_out == null { ts_out = now() }
+    .time = ts_out
 
-    t = parsed.ts
-    if t == null { t = src.timestamp }
-    if t == null { t = now() }
-    .time = t
-
-    # Determine path: explicit _path wins; else infer from fields.
-    path = to_string(parsed._path) ?? ""
+    # ── which zeek log is this? ─────────────────────────────────────────────
+    # The json-streaming-logs package adds `_path` ("conn"/"dns"/"http"); plain
+    # `LogAscii::use_json=T` does NOT, so infer from the field shape instead.
+    # Order matters: check http first (a conn record can carry service:"http"
+    # but never `method`/`uri`/`status_code`).
+    path = ""
+    if is_string(parsed._path) { path = string!(parsed._path) }
     if path == "" {
       if exists(parsed.method) || exists(parsed.uri) || exists(parsed.status_code) {
         path = "http"
       } else if exists(parsed.query) || exists(parsed.qtype_name) || exists(parsed.rcode_name) {
         path = "dns"
-      } else if exists(parsed.conn_state) || exists(parsed.orig_ip_bytes) {
+      } else if exists(parsed.conn_state) || exists(parsed.orig_ip_bytes) || exists(parsed.history) {
         path = "conn"
       }
     }
-    .zeek_path = path
 
-    # Common 5-tuple
-    src_ep = {
-      "ip": parsed."id.orig_h",
-      "port": parsed."id.orig_p"
-    }
-    dst_ep = {
-      "ip": parsed."id.resp_h",
-      "port": parsed."id.resp_p"
+    .metadata = {
+      "product": {"name": "Zeek", "vendor_name": "Zeek"},
+      "version": "1.5.0",
+      "log_provider": "Zeek",
+      "log_name": path
     }
 
+    # ── common 5-tuple ──────────────────────────────────────────────────────
+    # Zeek flattens record fields with dots, so the keys are LITERALLY
+    # "id.orig_h" — a quoted path segment, not a nested `id` object.
+    src_ep = {"ip": parsed."id.orig_h", "port": parsed."id.orig_p"}
+    dst_ep = {"ip": parsed."id.resp_h", "port": parsed."id.resp_p"}
+
+    # Defaults, also the fallback for unrecognised zeek logs: they still carry
+    # the 5-tuple, so 4001 Network Activity / 6 Traffic is the honest mapping.
     .class_uid = 4001
-    .activity_id = 0
+    .activity_id = 6
     .severity_id = 1
-    .connection_info = {"protocol_name": parsed.proto, "service": parsed.service}
+    .connection_info = {"protocol_name": parsed.proto, "service": parsed.service, "uid": parsed.uid}
 
     if path == "conn" {
       .class_uid = 4001
-      state = to_string(parsed.conn_state) ?? ""
-      .activity_id = 1
-      if state == "SF" || state == "S1" || state == "RSTO" || state == "RSTR" { .activity_id = 2 }
+      state = ""
+      if is_string(parsed.conn_state) { state = string!(parsed.conn_state) }
+      # conn_state -> OCSF Network Activity activity_id
+      #   1 Open  2 Close  3 Reset  4 Fail  5 Refuse  6 Traffic
+      # (docs.zeek.org/en/master/logs/conn.html for the state semantics)
+      .activity_id = 6
+      if state == "S1" { .activity_id = 1 }
+      if state == "SF" || state == "S2" || state == "S3" || state == "SH" || state == "SHR" { .activity_id = 2 }
+      if state == "RSTO" || state == "RSTR" || state == "RSTOS0" || state == "RSTRH" { .activity_id = 3 }
+      if state == "S0" { .activity_id = 4; .severity_id = 2 }
       if state == "REJ" { .activity_id = 5; .severity_id = 3 }
-      if state == "S0" { .severity_id = 2 }
       .traffic = {
         "bytes_in": parsed.resp_bytes,
         "bytes_out": parsed.orig_bytes,
         "packets_in": parsed.resp_pkts,
         "packets_out": parsed.orig_pkts
       }
-      .duration = parsed.duration
+      # OCSF `duration` is INTEGER MILLISECONDS; zeek's is float seconds.
+      # Guard on null FIRST: to_float(null) is 0.0, not an error, so a `??`
+      # fallback alone would invent a 0ms duration for a conn that has none.
+      dur_f = -1.0
+      if parsed.duration != null { dur_f = to_float(parsed.duration) ?? -1.0 }
+      if dur_f >= 0.0 { .duration = to_int(dur_f * 1000.0) }
       .conn_state = parsed.conn_state
       .history = parsed.history
       .missed_bytes = parsed.missed_bytes
@@ -75,45 +110,200 @@ vrl: |
       .local_resp = parsed.local_resp
     } else if path == "dns" {
       .class_uid = 4003
-      qr = parsed.qtype_name
+      # A zeek dns line is one transaction: the response half is present once
+      # an rcode/answers appear. 1 Query / 2 Response.
       .activity_id = 1
       if exists(parsed.answers) || exists(parsed.rcode_name) { .activity_id = 2 }
-      rc = to_string(parsed.rcode_name) ?? ""
+      rc = ""
+      if is_string(parsed.rcode_name) { rc = string!(parsed.rcode_name) }
+      if rc == "NXDOMAIN" { .severity_id = 2 }
       if rc == "SERVFAIL" || rc == "REFUSED" { .severity_id = 3 }
+      # Canonical 4003 paths (packages/ocsf-classes.yaml field_schema):
+      # .query.hostname / .query.type / .query.class / .rcode / .rcode_id / .answers
+      # Zeek names DNS classes C_INTERNET/C_CHAOS/...; OCSF (and every sibling
+      # source in ocsf-dns-activity-current) uses the RFC names IN/CH/...
+      qc = ""
+      if is_string(parsed.qclass_name) { qc = string!(parsed.qclass_name) }
+      qclass = qc
+      if qc == "C_INTERNET" { qclass = "IN" }
+      if qc == "C_CHAOS"    { qclass = "CH" }
+      if qc == "C_HESIOD"   { qclass = "HS" }
+      if qc == "C_NONE"     { qclass = "NONE" }
+      if qc == "C_ANY"      { qclass = "ANY" }
+      .query = {
+        "hostname": parsed.query,
+        "type": parsed.qtype_name,
+        "opcode": parsed.opcode_name
+      }
+      if qclass != "" { .query.class = qclass }
+      if rc != "" { .rcode = rc }
+      if exists(parsed.rcode) { .rcode_id = parsed.rcode }
+      # `answers` is declared KEYWORD in the index template, so it must stay an
+      # array of STRINGS — zeek's native shape. An array of objects would be
+      # rejected by the mapping (and the sink has no DLQ: the doc just vanishes).
+      if exists(parsed.answers) { .answers = parsed.answers }
+      .query_time = ts_out
+      # rtt is only present once the response was seen. Guard on null FIRST:
+      # to_float(null) is 0.0, not an error, so a bare `??` fallback would give
+      # a query-only line a response_time equal to its query_time — i.e. claim a
+      # response that never happened.
+      rtt_f = -1.0
+      if parsed.rtt != null { rtt_f = to_float(parsed.rtt) ?? -1.0 }
+      if rtt_f >= 0.0 {
+        rt, rterr = from_unix_timestamp(to_int((tsf + rtt_f) * 1000000.0), unit: "microseconds")
+        if rterr == null { .response_time = rt }
+      }
       .dns = {
         "id": parsed.trans_id,
-        "question": {"name": parsed.query, "type": parsed.qtype_name, "class": parsed.qclass_name},
-        "response": {"rcode": parsed.rcode_name, "rcode_id": parsed.rcode, "answers": parsed.answers, "ttls": parsed.TTLs},
-        "flags": {"AA": parsed.AA, "TC": parsed.TC, "RD": parsed.RD, "RA": parsed.RA, "Z": parsed.Z, "rejected": parsed.rejected, "opcode": parsed.opcode_name}
+        "ttls": parsed.TTLs,
+        "rejected": parsed.rejected,
+        "flags": {"AA": parsed.AA, "TC": parsed.TC, "RD": parsed.RD, "RA": parsed.RA, "Z": parsed.Z}
       }
-      .rtt = parsed.rtt
     } else if path == "http" {
       .class_uid = 4002
-      status, _ = to_int(parsed.status_code)
-      if status == null { status = 0 }
-      .activity_id = 1
-      if status >= 500 { .severity_id = 4 }
+      method = ""
+      if is_string(parsed.method) { method = upcase(string!(parsed.method)) }
+      # method -> OCSF HTTP Activity activity_id
+      #   1 Connect 2 Delete 3 Get 4 Head 5 Options 6 Post 7 Put 8 Trace 9 Patch
+      .activity_id = 0
+      if method == "CONNECT" { .activity_id = 1 }
+      if method == "DELETE"  { .activity_id = 2 }
+      if method == "GET"     { .activity_id = 3 }
+      if method == "HEAD"    { .activity_id = 4 }
+      if method == "OPTIONS" { .activity_id = 5 }
+      if method == "POST"    { .activity_id = 6 }
+      if method == "PUT"     { .activity_id = 7 }
+      if method == "TRACE"   { .activity_id = 8 }
+      if method == "PATCH"   { .activity_id = 9 }
+      status = to_int(parsed.status_code) ?? 0
+      .severity_id = 1
       if status >= 400 && status < 500 { .severity_id = 3 }
-      if status >= 200 && status < 400 { .severity_id = 1 }
+      if status >= 500 { .severity_id = 4 }
+      # Zeek's `uri` carries the query string; OCSF splits path/query_string.
+      uri = ""
+      if is_string(parsed.uri) { uri = string!(parsed.uri) }
+      upath = uri
+      uquery = ""
+      if contains(uri, "?") {
+        parts = split(uri, "?", limit: 2)
+        p0 = parts[0]
+        if is_string(p0) { upath = string!(p0) }
+        p1 = parts[1]
+        if is_string(p1) { uquery = string!(p1) }
+      }
       .http_request = {
-        "method": parsed.method,
-        "url": {"path": parsed.uri, "hostname": parsed.host},
+        "http_method": method,
+        "url": {"path": upath, "hostname": parsed.host},
         "version": parsed.version,
         "user_agent": parsed.user_agent,
-        "body_length": parsed.request_body_len
+        "referrer": parsed.referrer,
+        "length": parsed.request_body_len
       }
+      if uquery != "" { .http_request.url.query_string = uquery }
       .http_response = {
-        "status_code": parsed.status_code,
-        "status_msg": parsed.status_msg,
+        "code": parsed.status_code,
+        "message": parsed.status_msg,
         "length": parsed.response_body_len,
         "mime_types": parsed.resp_mime_types,
         "fuids": parsed.resp_fuids
       }
+      mt = parsed.resp_mime_types
+      if is_array(mt) {
+        mts = array!(mt)
+        mt0 = mts[0]
+        if is_string(mt0) { .http_response.content_type = string!(mt0) }
+      }
       .trans_depth = parsed.trans_depth
       .tags = parsed.tags
+    } else if path == "ssl" {
+      # TLS handshake summary -> Network Activity with a .tls object.
+      .class_uid = 4001
+      .activity_id = 6
+      .tls = {"version": parsed.version, "cipher": parsed.cipher, "sni": parsed.server_name}
+      if is_boolean(parsed.established) { .tls.established = parsed.established }
+      if is_boolean(parsed.resumed) { .tls.resumed = parsed.resumed }
+    } else if path == "ssh" {
+      .class_uid = 4007
+      .activity_id = 1
+      ok_auth = parsed.auth_success
+      if ok_auth == true { .status_id = 1; .status = "Success" }
+      if ok_auth == false { .status_id = 2; .status = "Failure"; .severity_id = 3 }
+      .client = {"version_string": parsed.client}
+      .server = {"version_string": parsed.server}
+      .auth_attempts = parsed.auth_attempts
+      if is_string(parsed.direction) { .direction = parsed.direction }
+    } else if path == "ftp" {
+      .class_uid = 4008
+      .activity_id = 1
+      .user = {"name": parsed.user}
+      .command = parsed.command
+      .arg = parsed.arg
+      .reply_code = parsed.reply_code
+      rc = to_int(parsed.reply_code) ?? 0
+      if rc >= 500 { .severity_id = 3 }
+    } else if path == "smtp" {
+      .class_uid = 4009
+      .activity_id = 1
+      .email = {"from": parsed.from, "to": parsed.to, "subject": parsed.subject, "uid": parsed.msg_id, "smtp_from": parsed.mailfrom, "smtp_to": parsed.rcptto}
+    } else if path == "dhcp" {
+      # DHCP carries no id.orig_h 5-tuple; rebind endpoints from client/server.
+      .class_uid = 4004
+      .activity_id = 1
+      src_ep = {"ip": parsed.client_addr}
+      dst_ep = {"ip": parsed.server_addr}
+      .dhcp = {"assigned_addr": parsed.assigned_addr, "lease_dur": parsed.lease_time, "hostname": parsed.host_name, "mac": parsed.mac}
+    } else if path == "ntp" {
+      .class_uid = 4013
+      .activity_id = 1
+      .ntp = {"version": parsed.version, "stratum": parsed.stratum, "mode": parsed.mode}
+    } else if path == "rdp" {
+      .class_uid = 4005
+      .activity_id = 1
+      .rdp = {"cookie": parsed.cookie, "result": parsed.result, "protocol": parsed.security_protocol}
+    } else if path == "smb_mapping" || path == "smb_files" {
+      .class_uid = 4006
+      .activity_id = 1
+      .smb = {"path": parsed.path, "share_type": parsed.share_type, "service": parsed.service}
+    } else if path == "files" {
+      # files carries no id.orig_h; tx_hosts/rx_hosts arrays give the endpoints.
+      .class_uid = 4010
+      .activity_id = 1
+      txh = parsed.tx_hosts
+      if is_array(txh) { txa = array!(txh); t0 = txa[0]; if is_string(t0) { src_ep = {"ip": t0} } }
+      rxh = parsed.rx_hosts
+      if is_array(rxh) { rxa = array!(rxh); r0 = rxa[0]; if is_string(r0) { dst_ep = {"ip": r0} } }
+      .file = {"name": parsed.filename, "mime_type": parsed.mime_type, "size": parsed.total_bytes, "md5": parsed.md5, "sha1": parsed.sha1}
+    } else if path == "tunnel" {
+      .class_uid = 4014
+      .activity_id = 1
+      .tunnel = {"type": parsed.tunnel_type, "action": parsed.action}
+    } else if path == "kerberos" {
+      .class_uid = 3002
+      .activity_id = 1
+      ksucc = parsed.success
+      if ksucc == true { .status_id = 1; .status = "Success" }
+      if ksucc == false { .status_id = 2; .status = "Failure"; .severity_id = 3 }
+      .user = {"name": parsed.client}
+      .service = {"name": parsed.service, "request_type": parsed.request_type}
+      if is_string(parsed.error_msg) { .status_detail = parsed.error_msg }
+    } else if path == "weird" {
+      # Protocol anomaly; still a network event.
+      .class_uid = 4001
+      .activity_id = 6
+      .severity_id = 2
+      .weird = {"name": parsed.name, "peer": parsed.peer}
+    } else if path == "notice" {
+      # Zeek notices are alerts -> Detection Finding.
+      .class_uid = 2004
+      .activity_id = 1
+      .severity_id = 3
+      .finding_info = {"title": parsed.note, "desc": parsed.msg, "sub": parsed.sub}
+      if is_string(parsed.src) { src_ep = {"ip": parsed.src} }
+      if is_string(parsed.dst) { dst_ep = {"ip": parsed.dst} }
     }
 
     .src_endpoint = src_ep
     .dst_endpoint = dst_ep
     .uid = parsed.uid
     .message = src.message
+    if is_object(src.kubernetes) { .k8s = src.kubernetes }

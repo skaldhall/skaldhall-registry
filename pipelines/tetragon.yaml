@@ -1,125 +1,258 @@
-# Cilium Tetragon process events
+# Cilium Tetragon eBPF security events -> OCSF (universal, multi-class).
+#
+# ── WHY THIS IS BUILT THE WAY IT IS ────────────────────────────────────────────
+# Tetragon is NOT a fixed-schema log source. Its process_exec/process_exit events
+# are standardized (every install emits them identically), but process_kprobe is
+# a PROGRAMMABLE sensor: the events you get are whatever kernel functions YOUR
+# TracingPolicies choose to hook. There is no canonical "tetragon kprobe event".
+#
+# So classification here is layered, most-authoritative first:
+#
+#   1. EVENT KIND        process_exec/process_exit -> 1007. Universal: Tetragon's
+#                        own built-in schema, no config dependency.
+#   2. POLICY NAME       A TracingPolicy named "<ocsf_class_uid>-<whatever>" (e.g.
+#                        "1005-monitor-kernel-modules") DECLARES its class. The
+#                        author knows what they are tracing; we don't guess. This
+#                        is the only layer that can cover kernel symbols nobody
+#                        has ever seen. Universal for anyone who follows it.
+#                        Accepted forms: "1005-name", "1005_name", "ocsf-1005-name".
+#                        The id is validated against the real OCSF class list, so
+#                        a policy named "2019-legacy-rule" is NOT misread as a
+#                        class -- it falls through to layer 3.
+#   3. KERNEL TAXONOMY   LSM hooks (security_*) and syscall families, matched by
+#                        PATTERN after the arch prefix is normalized away
+#                        (__arm64_sys_X / __x64_sys_X / __sys_X / sys_X -> X).
+#                        Universal because it keys on the KERNEL's stable ABI --
+#                        identical on every cluster and every architecture -- not
+#                        on any particular policy set.
+#   4. UNMAPPED          class_uid = 0. The operator routes 0 to the holding
+#                        index. We NEVER stamp a plausible-looking class on an
+#                        event we could not classify: a visible gap beats a
+#                        silent lie. To fix a held event, name its policy
+#                        "<class_uid>-..." per layer 2.
+#
+# An earlier version of this entry matched function_name against ~40 hardcoded
+# strings cherry-picked from one demo policy set. It looked intelligent but was
+# hardcoded to its author: real policies hooking __sys_setuid (vs
+# __arm64_sys_setuid) or bpf_check (vs security_bpf) silently fell through to
+# 1007. Layers 2+3 exist so that never happens again.
 sourceId: "tetragon"
-fingerprint: ""           # wildcard — applies to any fingerprint for this sourceId
+fingerprint: ""           # wildcard -- any fingerprint for this sourceId
 family: "json"
-ocsfClass: 1007
-description: "Cilium Tetragon process events"
-sample: "{\"process_exec\":{\"process\":{\"exec_id\":\"Z2tlLWpvaG4tNjMyLWRlZmF1bHQtcG9vbC03MDQxY2FjMC05czk1OjEzNTQ4Njc0MzIxMzczOjUyNjk5\",\"pid\":52699,\"uid\":0,\"cwd\":\"/\",\"binary\":\"/usr/bin/curl\",\"arguments\":\"https://ebpf.io/applications/#tetragon\",\"flags\":\"execve rootcwd\",\"start_time\":\"2023-10-06T22:03:57.700327580Z\",\"auid\":4294967295,\"pod\":{\"namespace\":\"default\",\"name\":\"xwing\",\"container\":{\"id\":\"containerd://551e161c47d8ff0eb665438a7bcd5b4e3ef5a297282b40a92b7c77d6bd168eb3\",\"name\":\"spaceship\",\"image\":{\"id\":\"docker"
+ocsfClass: 1007           # PRIMARY/identity class (process activity)
+# Classes the kernel taxonomy (layer 3) can produce. This drives index
+# PRE-CREATION only (burst-safety on first write); it does NOT limit routing --
+# a policy-name declaration (layer 2) may name any valid OCSF class and the
+# operator routes it to that class's index regardless of this list.
+emits: [1007, 1001, 4001, 3001, 1004, 1005, 1003]
+description: "Cilium Tetragon eBPF events -> OCSF. Kind + policy-name declaration + kernel (LSM/syscall) taxonomy; unmapped events are held, never mislabelled."
+sample: '{"process_exec":{"process":{"pid":52699,"uid":0,"binary":"/usr/bin/curl","arguments":"https://ebpf.io"}},"time":"2023-10-06T22:03:57.700326678Z","node_name":"n1"}'
 vrl: |
     src = .
     parsed = {}
     if is_string(.message) {
       ok, err = parse_json(string!(.message))
-      if err == null {
-        if is_object(ok) { parsed = object!(ok) }
+      if err == null && is_object(ok) { parsed = object!(ok) }
+    }
+    . = {}
+
+    # ── which tetragon event kind, and pull the inner object ──────────────────
+    kind = ""
+    inner = {}
+    if is_object(parsed.process_exec)       { kind = "exec";       inner = object!(parsed.process_exec) }
+    if is_object(parsed.process_exit)       { kind = "exit";       inner = object!(parsed.process_exit) }
+    if is_object(parsed.process_kprobe)     { kind = "kprobe";     inner = object!(parsed.process_kprobe) }
+    if is_object(parsed.process_tracepoint) { kind = "tracepoint"; inner = object!(parsed.process_tracepoint) }
+    if is_object(parsed.process_uprobe)     { kind = "uprobe";     inner = object!(parsed.process_uprobe) }
+    if is_object(parsed.process_lsm)        { kind = "lsm";        inner = object!(parsed.process_lsm) }
+    if is_object(parsed.process_loader)     { kind = "loader";     inner = object!(parsed.process_loader) }
+
+    proc = {}
+    parent_proc = {}
+    if is_object(inner.process) { proc = object!(inner.process) }
+    if is_object(inner.parent)  { parent_proc = object!(inner.parent) }
+    pod_obj = {}
+    if is_object(proc.pod) { pod_obj = object!(proc.pod) }
+    node_name = parsed.node_name
+
+    fn = ""
+    if is_string(inner.function_name) { fn = string!(inner.function_name) }
+    pn = ""
+    if is_string(inner.policy_name) { pn = string!(inner.policy_name) }
+
+    # ── LAYER 1: event kind (universal — Tetragon's built-in schema) ──────────
+    # 0 means UNMAPPED -> holding index. Never default to a plausible class.
+    class_uid = 0
+    activity_id = 0
+    severity_id = 1
+    if kind == "exec"   { class_uid = 1007; activity_id = 1 }
+    if kind == "exit"   { class_uid = 1007; activity_id = 2 }
+    if kind == "loader" { class_uid = 1005; activity_id = 1 }
+
+    # ── LAYER 2: policy name DECLARES the class ───────────────────────────────
+    # "1005-monitor-kernel-modules" / "1005_x" / "ocsf-1005-x" -> 1005.
+    # Validated against the real OCSF class list so an unrelated leading number
+    # (a year, a ticket id) is ignored rather than hijacked into a bogus class.
+    ocsf_class_uids = [1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,2001,2002,2003,2004,2005,2006,2007,2008,3001,3002,3003,3004,3005,3006,4001,4002,4003,4004,4005,4006,4007,4008,4009,4010,4011,4012,4013,4014,5001,5002,5003,5004,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5040,6001,6002,6003,6004,6005,6006,6007,6008,7001,7002,7003,7004,8001,8002]
+    declared = 0
+    pm = parse_regex(pn, r'^(?:ocsf[-_])?(?P<cls>\d{4})[-_.]') ?? {}
+    dc = to_int(pm.cls) ?? 0
+    if includes(ocsf_class_uids, dc) { declared = dc }
+
+    # ── LAYER 3: kernel taxonomy (universal — LSM hooks + syscall families) ───
+    # Normalize the architecture prefix FIRST. This is what makes the taxonomy
+    # portable: __arm64_sys_setuid, __x64_sys_setuid, __sys_setuid and sys_setuid
+    # are the same call and must classify identically on every arch.
+    base = fn
+    base = replace(base, r'^__(arm64|x64|ia32|s390x|s390|powerpc|riscv|mips)_sys_', "")
+    base = replace(base, r'^__(se|do)_sys_', "")
+    base = replace(base, r'^__sys_', "")
+    base = replace(base, r'^sys_', "")
+
+    # Ordered most-specific -> most-general. Order is load-bearing: e.g.
+    # security_file_mprotect is MEMORY, not file, so memory is tested first.
+    inferred = 0
+    if match(base, r'^(security_bpf|bpf_|security_perf_event_)') || base == "bpf" || base == "perf_event_open" {
+      inferred = 1003
+    } else if match(base, r'(mprotect|mmap|munmap|mremap|madvise|mlock|brk)') {
+      inferred = 1004
+    } else if match(base, r'(kernel_module|init_module|delete_module|kernel_read_file)') {
+      inferred = 1005
+    } else if match(base, r'(capset|commit_creds|create_user_ns|setns|setgroups)') || match(base, r'^set(re|res|fs)?[ug]id$') || match(base, r'^security_task_(setuid|setgid|setpgid|fix_setuid)') {
+      inferred = 3001
+    } else if match(base, r'^(tcp_|udp_|inet_|ip_|sock_|skb_|security_socket_)') || match(base, r'^(connect|accept4?|bind|listen|sendto|recvfrom|sendmsg|recvmsg|socket|socketpair|shutdown)$') {
+      inferred = 4001
+    } else if match(base, r'^security_(inode|file|path|dentry|sb)_') || match(base, r'^(fd_install|vfs_)') || match(base, r'^(openat2?|open|creat|unlinkat|unlink|renameat2?|rename|linkat|link|symlinkat|symlink|mkdirat|mkdir|rmdir|truncate|ftruncate|read|write|pread64|pwrite64|readv|writev|chmod|fchmodat|fchmod|chown|fchownat|fchown|lchown|statx|newfstatat|stat|fstat|lstat|close|fsync|fdatasync|fallocate|getdents64)$') {
+      inferred = 1001
+    } else if match(base, r'^security_bprm_') || match(base, r'^security_task_') || match(base, r'^(execveat|execve|clone3|clone|fork|vfork|exit_group|exit|ptrace|tgkill|tkill|kill|wait4|waitid|prctl)$') {
+      inferred = 1007
+    }
+
+    # ── resolve: explicit declaration beats inference; unknown stays 0 (held) ──
+    if kind == "kprobe" || kind == "tracepoint" || kind == "uprobe" || kind == "lsm" {
+      if declared != 0 {
+        class_uid = declared
+      } else if inferred != 0 {
+        class_uid = inferred
+      } else {
+        class_uid = 0
       }
     }
 
-    . = {}
-
-    # Determine activity by envelope key
-    activity = 0
-    proc = {}
-    parent_proc = {}
-    pod_obj = {}
-    node_name = parsed.node_name
-
-    if is_object(parsed.process_exec) {
-      activity = 1
-      pe = object!(parsed.process_exec)
-      if is_object(pe.process) { proc = object!(pe.process) }
-      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    # activity/severity refinement per resolved class.
+    if class_uid == 1001 {
+      activity_id = 1
+      if match(base, r'(unlink|rmdir)') { activity_id = 4 }
+      if match(base, r'(truncate|write|rename|chmod|chown)') { activity_id = 3 }
+      if match(base, r'^(read|readv|pread64|open|openat|stat|fstat|lstat|statx|getdents64)') { activity_id = 2 }
     }
-    if is_object(parsed.process_exit) {
-      activity = 2
-      pe = object!(parsed.process_exit)
-      if is_object(pe.process) { proc = object!(pe.process) }
-      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
+    if class_uid == 4001 {
+      activity_id = 6
+      if match(base, r'(connect|bind|listen|accept)') { activity_id = 1 }
+      if match(base, r'(close|shutdown)') { activity_id = 2 }
     }
-    if is_object(parsed.process_kprobe) {
-      activity = 4
-      pe = object!(parsed.process_kprobe)
-      if is_object(pe.process) { proc = object!(pe.process) }
-      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
-    }
-    if is_object(parsed.process_tracepoint) {
-      activity = 4
-      pe = object!(parsed.process_tracepoint)
-      if is_object(pe.process) { proc = object!(pe.process) }
-      if is_object(pe.parent) { parent_proc = object!(pe.parent) }
-    }
+    if class_uid == 3001 { severity_id = 2 }
+    if class_uid == 1005 { activity_id = 1; severity_id = 2 }
+    if class_uid == 1003 { severity_id = 2 }
 
-    if is_object(proc.pod) { pod_obj = object!(proc.pod) }
+    .class_uid = class_uid
+    .activity_id = activity_id
+    .severity_id = severity_id
 
-    .class_uid = 1007
-    .activity_id = activity
-    .severity_id = 1
-
-    t_str = to_string(parsed.time) ?? ""
+    # ── time ──────────────────────────────────────────────────────────────────
+    t_str = ""
+    if is_string(parsed.time) { t_str = string!(parsed.time) }
     ts = parse_timestamp(t_str, format: "%+") ?? now()
     .time = ts
 
+    # ── common OCSF fields shared by every class ──────────────────────────────
+    # metadata.uid is the dedup key (the operator's sink epilogue extracts it as
+    # the OpenSearch _id). It MUST be unique PER EVENT: Tetragon's exec_id is
+    # per-PROCESS, so a process that hits a kprobe 1000 times emits 1000 events
+    # that all share one exec_id — keying dedup on exec_id alone collapses them
+    # to a single document and silently drops 999 security events. The event's
+    # `time` is a nanosecond timestamp, unique per event; exec_id + time is
+    # unique per event yet identical across an at-least-once redelivery.
+    ev_uid = (to_string(proc.exec_id) ?? "noproc") + "@" + (to_string(parsed.time) ?? "")
+    if kind == "kprobe" || kind == "tracepoint" || kind == "uprobe" || kind == "lsm" { ev_uid = ev_uid + ":" + fn }
     .metadata = {
       "product": {"name": "Tetragon", "vendor_name": "Cilium"},
       "version": "1.5.0",
-      "uid": to_string(proc.exec_id) ?? ""
+      "uid": ev_uid,
+      "log_name": kind
     }
-
+    # NOTE: process.exec_id is deliberately NOT set here — the operator's dedup
+    # epilogue checks .process.exec_id FIRST, and Tetragon's exec_id is
+    # per-process, so setting it would re-introduce the collapse above. The
+    # process identity is preserved in metadata.uid and process.session_exec_id.
     .process = {
       "pid": proc.pid,
       "uid": proc.uid,
       "tid": proc.tid,
-      "command_line": to_string(proc.arguments) ?? "",
-      "image": {
-        "file": {"path": to_string(proc.binary) ?? ""}
-      },
+      "cmd_line": to_string(proc.arguments) ?? "",
       "file": {"path": to_string(proc.binary) ?? ""},
       "cwd": proc.cwd,
       "start_time": proc.start_time,
-      "auid": proc.auid,
-      "exec_id": proc.exec_id,
-      "parent": {
+      "session_exec_id": proc.exec_id,
+      "parent_process": {
         "pid": parent_proc.pid,
         "uid": parent_proc.uid,
-        "command_line": to_string(parent_proc.arguments) ?? "",
+        "cmd_line": to_string(parent_proc.arguments) ?? "",
         "file": {"path": to_string(parent_proc.binary) ?? ""},
-        "exec_id": parent_proc.exec_id,
-        "start_time": parent_proc.start_time
+        "session_exec_id": parent_proc.exec_id
       }
     }
-
-    .actor = {
-      "user": {"uid": proc.uid}
-    }
-
-    .device = {"hostname": node_name}
+    .actor = {"process": {"pid": proc.pid, "file": {"path": to_string(proc.binary) ?? ""}}, "user": {"uid": proc.uid}}
+    .device = {"hostname": node_name, "type": "Server"}
 
     container = {}
     if is_object(pod_obj.container) { container = object!(pod_obj.container) }
-
+    # k8s.pod is an OBJECT {name, namespace} in the index mapping — a bare string
+    # here is rejected at gate time (mapper_parsing_exception in OpenSearch).
     .k8s = {
       "namespace": pod_obj.namespace,
-      "pod": pod_obj.name,
+      "pod": {"name": pod_obj.name, "namespace": pod_obj.namespace},
       "workload": pod_obj.workload,
       "labels": pod_obj.pod_labels,
-      "container": {
-        "id": container.id,
-        "name": container.name,
-        "image": container.image
-      }
+      "container": {"id": container.id, "name": container.name, "image": container.image}
     }
 
-    # Extra fields for kprobe/tracepoint
-    if activity == 4 {
-      pe = parsed.process_kprobe
-      if !is_object(pe) { pe = parsed.process_tracepoint }
-      if is_object(pe) {
-        pem = object!(pe)
-        .function_name = pem.function_name
-        .args = pem.args
-        .policy_name = pem.policy_name
-        .action = pem.action
-      }
+    # ── per-class enrichment from the kprobe args ─────────────────────────────
+    # args is a list of {<type>_arg: value}; sock/file arg is arg[0] for the
+    # functions we hook, so read it directly (a closure can't mutate outer vars).
+    a0 = {}
+    if is_array(inner.args) {
+      aa = array!(inner.args)
+      e0 = aa[0]
+      if is_object(e0) { a0 = object!(e0) }
     }
-    .status = parsed.status
-    .raw_data = parsed
+    if class_uid == 4001 {
+      sock = {}
+      if is_object(a0.sock_arg) { sock = object!(a0.sock_arg) }
+      .src_endpoint = {"ip": sock.saddr, "port": sock.sport}
+      .dst_endpoint = {"ip": sock.daddr, "port": sock.dport}
+      .connection_info = {"protocol_name": sock.protocol, "direction": "Outbound", "direction_id": 2}
+      .status = sock.state
+    }
+    if class_uid == 1001 {
+      farg = {}
+      if is_object(a0.file_arg) { farg = object!(a0.file_arg) }
+      .file = {"path": farg.path, "type_id": 1, "type": "Regular File"}
+    }
+
+    # kprobe metadata: the hooked function + which policy fired. Kept on every
+    # event (not just held ones) so the taxonomy is auditable in-index.
+    if kind == "kprobe" || kind == "tracepoint" || kind == "uprobe" || kind == "lsm" {
+      .function_name = fn
+      .policy_name = inner.policy_name
+    }
+
+    # ── LAYER 4: unmapped marker ──────────────────────────────────────────────
+    # class_uid 0 routes to the holding index. Carry WHY, so a held event is
+    # self-explaining and the fix is obvious to whoever reads it.
+    if class_uid == 0 {
+      .unmapped = true
+      .unmapped_reason = "no OCSF class inferred for tetragon function_name=" + fn + "; declare one by renaming its TracingPolicy to '<ocsf_class_uid>-" + pn + "'"
+    }
+
+    .message = src.message

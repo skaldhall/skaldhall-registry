@@ -3,12 +3,18 @@
 # fetches is `{pipelines: [...]}` where each entry has the same fields
 # as a per-pipeline file (minus the `sample` field, which is for human
 # review only).
+#
+# This script is an ALLOWLIST: it copies the fields named in FIELDS below and
+# nothing else. Adding a field to pipelines/<src>.yaml without adding it here
+# means the operator never sees it — `emits` was silently dropped this way.
+# Unknown keys are now a hard error rather than a silent strip.
 set -e
 cd "$(dirname "$0")/.."
 
 python3 - <<'PY'
 from pathlib import Path
 import json
+import sys
 
 ROOT = Path(".")
 PIPELINES = ROOT / "pipelines"
@@ -16,14 +22,32 @@ INDEX = ROOT / "index.yaml"
 
 import yaml
 
+# Every key an entry may carry. `sample` is human-review-only and deliberately
+# not copied into the index; everything else here is read by the operator
+# (see registry.Entry in services/operator/internal/registry/registry.go).
+FIELDS = {"sourceId", "fingerprint", "family", "ocsfClass", "emits",
+          "classByKey", "description", "vrl", "sample"}
+
 entries = []
+unknown = []
 for f in sorted(PIPELINES.glob("*.yaml")):
     d = yaml.safe_load(f.read_text())
     if d is None:
         continue
+    for k in d:
+        if k not in FIELDS:
+            unknown.append(f"{f.name}: {k}")
     # Strip the human-review-only fields.
     d.pop("sample", None)
     entries.append(d)
+
+if unknown:
+    print("ERROR: unknown key(s) in pipeline files — add them to FIELDS in", file=sys.stderr)
+    print("       scripts/build-index.sh (and to registry.Entry) or the operator", file=sys.stderr)
+    print("       will never see them:", file=sys.stderr)
+    for u in unknown:
+        print(f"       - {u}", file=sys.stderr)
+    sys.exit(1)
 
 # Emit by hand so VRL stays as a literal block scalar (PyYAML's safe_dump
 # wraps long strings, which would change semantics).
@@ -40,6 +64,12 @@ for e in entries:
     parts.append(f"    fingerprint: {yamlify(e.get('fingerprint',''))}")
     parts.append(f"    family: {yamlify(e.get('family',''))}")
     parts.append(f"    ocsfClass: {int(e['ocsfClass'])}")
+    # Optional fields: emitted only when set, so single-class entries stay
+    # byte-for-byte as they were.
+    if e.get('emits'):
+        parts.append(f"    emits: {json.dumps([int(c) for c in e['emits']])}")
+    if e.get('classByKey'):
+        parts.append(f"    classByKey: {json.dumps({str(k): int(v) for k, v in e['classByKey'].items()})}")
     parts.append(f"    description: {yamlify(e.get('description',''))}")
     vrl = e['vrl']
     if not vrl.endswith('\n'):
