@@ -1,8 +1,49 @@
-# source: https://docs.zeek.org/en/master/logs/conn.html, https://docs.zeek.org/en/master/logs/dns.html, https://docs.zeek.org/en/master/logs/http.html
-{"ts":1591367999.305988,"uid":"CMdzit1AMNsmfAIiQc","id.orig_h":"192.168.4.76","id.orig_p":36844,"id.resp_h":"192.168.4.1","id.resp_p":53,"proto":"udp","service":"dns","duration":0.06685185432434082,"orig_bytes":62,"resp_bytes":141,"conn_state":"SF","missed_bytes":0,"history":"Dd","orig_pkts":2,"orig_ip_bytes":118,"resp_pkts":2,"resp_ip_bytes":197,"ip_proto":17}
+# source: https://docs.zeek.org/en/master/logs/ — one+ representative JSON line per
+# zeek analyzer. ONE source, MANY OCSF classes; the VRL routes each by _path (or
+# field-shape inference when _path is absent, as with LogAscii::use_json=T).
+# The data lines (non-#) are kept byte-identical with
+# ~/bragi/tests/prompt-suite/fixtures/zeek/samples.txt, whose expected.yaml pins
+# the class_uid each must produce. Keep the two in sync (scripts note in CONTRIBUTING).
+# --- conn -> 4001 Network Activity ---
+{"_path":"conn","ts":1591367999.305988,"uid":"CMdzit1AMNsmfAIiQc","id.orig_h":"192.168.4.76","id.orig_p":36844,"id.resp_h":"192.168.4.1","id.resp_p":53,"proto":"udp","service":"dns","duration":0.06685185432434082,"orig_bytes":62,"resp_bytes":141,"conn_state":"SF","missed_bytes":0,"history":"Dd","orig_pkts":2,"orig_ip_bytes":118,"resp_pkts":2,"resp_ip_bytes":197,"ip_proto":17}
 {"ts":1591367999.430166,"uid":"C5bLoe2Mvxqhawzqqd","id.orig_h":"192.168.4.76","id.orig_p":46378,"id.resp_h":"31.3.245.133","id.resp_p":80,"proto":"tcp","service":"http","duration":0.25411510467529297,"orig_bytes":77,"resp_bytes":295,"conn_state":"SF","missed_bytes":0,"history":"ShADadFf","orig_pkts":6,"orig_ip_bytes":397,"resp_pkts":4,"resp_ip_bytes":511,"ip_proto":6}
 {"ts":1098361214.420459,"uid":"C9EV8R4fN8bfSj08f","id.orig_h":"192.168.170.2","id.orig_p":0,"id.resp_h":"224.0.0.6","id.resp_p":0,"proto":"unknown_transport","duration":6.437546968460083,"orig_bytes":0,"resp_bytes":0,"conn_state":"OTH","local_orig":true,"local_resp":false,"missed_bytes":0,"orig_pkts":4,"orig_ip_bytes":768,"resp_pkts":0,"resp_ip_bytes":0,"ip_proto":89}
+{"_path":"conn","ts":1591368000.111,"uid":"Cconn0S0","id.orig_h":"10.0.0.5","id.orig_p":44001,"id.resp_h":"10.0.0.9","id.resp_p":445,"proto":"tcp","conn_state":"S0","history":"S","orig_bytes":0,"resp_bytes":0,"orig_pkts":1,"resp_pkts":0,"orig_ip_bytes":44,"resp_ip_bytes":0}
+{"_path":"conn","ts":1591368000.222,"uid":"CconnREJ","id.orig_h":"10.0.0.5","id.orig_p":44002,"id.resp_h":"10.0.0.9","id.resp_p":23,"proto":"tcp","conn_state":"REJ","history":"Sr","orig_pkts":1,"resp_pkts":1,"orig_ip_bytes":44,"resp_ip_bytes":40}
+# --- dns -> 4003 DNS Activity ---
 {"ts":1774911641.78917,"uid":"CHhAvVGS1DHFjwGM9","id.orig_h":"172.17.0.2","id.orig_p":36844,"id.resp_h":"1.1.1.1","id.resp_p":53,"proto":"udp","trans_id":54060,"query":"zeek.org","qclass":1,"qclass_name":"C_INTERNET","qtype":28,"qtype_name":"AAAA","rcode":0,"rcode_name":"NOERROR","AA":false,"TC":false,"RD":true,"RA":false,"Z":2,"rejected":false,"opcode":0,"opcode_name":"query"}
 {"ts":1774911641.803041,"uid":"CHhAvVGS1DHFjwGM9","id.orig_h":"172.17.0.2","id.orig_p":36844,"id.resp_h":"1.1.1.1","id.resp_p":53,"proto":"udp","trans_id":20661,"rtt":0.03837108612060547,"query":"zeek.org","qclass":1,"qclass_name":"C_INTERNET","qtype":1,"qtype_name":"A","rcode":0,"rcode_name":"NOERROR","AA":false,"TC":false,"RD":true,"RA":true,"Z":2,"answers":["192.0.78.150","192.0.78.212"],"TTLs":[60.0,60.0],"rejected":false,"opcode":0,"opcode_name":"query"}
+{"_path":"dns","ts":1774911642.1,"uid":"Cdnsnx","id.orig_h":"172.17.0.2","id.orig_p":36855,"id.resp_h":"1.1.1.1","id.resp_p":53,"proto":"udp","trans_id":40001,"query":"no-such-domain.example","qclass_name":"C_INTERNET","qtype_name":"A","rcode":3,"rcode_name":"NXDOMAIN","RD":true,"RA":true,"rejected":false,"opcode_name":"query"}
+# --- http -> 4002 HTTP Activity ---
 {"ts":1591367999.512593,"uid":"C5bLoe2Mvxqhawzqqd","id.orig_h":"192.168.4.76","id.orig_p":46378,"id.resp_h":"31.3.245.133","id.resp_p":80,"trans_depth":1,"method":"GET","host":"testmyids.com","uri":"/","version":"1.1","user_agent":"curl/7.47.0","request_body_len":0,"response_body_len":39,"status_code":200,"status_msg":"OK","tags":[],"resp_fuids":["FEEsZS1w0Z0VJIb5x4"],"resp_mime_types":["text/plain"]}
-{"ts":1591367999.989472,"uid":"CKhMzC3FSi6cwo7w7g","id.orig_h":"192.168.4.76","id.orig_p":46380,"id.resp_h":"31.3.245.133","id.resp_p":443,"trans_depth":1,"method":"POST","host":"www.example.com","uri":"/login","version":"1.1","user_agent":"Mozilla/5.0","request_body_len":86,"response_body_len":2048,"status_code":401,"status_msg":"Unauthorized","tags":[]}
+{"ts":1591367999.989472,"uid":"CKhMzC3FSi6cwo7w7g","id.orig_h":"192.168.4.76","id.orig_p":46380,"id.resp_h":"31.3.245.133","id.resp_p":443,"trans_depth":1,"method":"POST","host":"www.example.com","uri":"/login?next=/","version":"1.1","user_agent":"Mozilla/5.0","request_body_len":86,"response_body_len":2048,"status_code":401,"status_msg":"Unauthorized","tags":[]}
+{"_path":"http","ts":1591368000.5,"uid":"Chttp500","id.orig_h":"192.168.4.76","id.orig_p":46400,"id.resp_h":"31.3.245.133","id.resp_p":80,"trans_depth":1,"method":"GET","host":"api.example.com","uri":"/v1/orders","version":"1.1","user_agent":"Go-http-client/1.1","status_code":500,"status_msg":"Internal Server Error"}
+# --- ssl -> 4001 Network Activity (TLS handshake; populates .tls) ---
+{"_path":"ssl","ts":1591368001.10,"uid":"Cssl1","id.orig_h":"192.168.4.76","id.orig_p":45820,"id.resp_h":"93.184.216.34","id.resp_p":443,"version":"TLSv13","cipher":"TLS_AES_256_GCM_SHA384","curve":"x25519","server_name":"example.com","resumed":false,"established":true,"ssl_history":"CsxKG"}
+{"_path":"ssl","ts":1591368001.55,"uid":"Cssl2","id.orig_h":"192.168.4.76","id.orig_p":45830,"id.resp_h":"104.18.0.1","id.resp_p":443,"version":"TLSv12","cipher":"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256","server_name":"cloudflare.com","resumed":true,"established":true}
+# --- ssh -> 4007 SSH Activity ---
+{"_path":"ssh","ts":1591368002.10,"uid":"Cssh1","id.orig_h":"192.168.4.76","id.orig_p":52010,"id.resp_h":"192.168.4.1","id.resp_p":22,"version":2,"auth_success":true,"auth_attempts":1,"direction":"OUTBOUND","client":"SSH-2.0-OpenSSH_8.2p1","server":"SSH-2.0-OpenSSH_7.9p1","cipher_alg":"chacha20-poly1305@openssh.com","host_key":"aa:bb:cc:dd"}
+{"_path":"ssh","ts":1591368002.90,"uid":"Cssh2","id.orig_h":"203.0.113.9","id.orig_p":52999,"id.resp_h":"192.168.4.1","id.resp_p":22,"version":2,"auth_success":false,"auth_attempts":6,"direction":"INBOUND","client":"SSH-2.0-libssh_0.9","server":"SSH-2.0-OpenSSH_7.9p1"}
+# --- ftp -> 4008 FTP Activity ---
+{"_path":"ftp","ts":1591368003.10,"uid":"Cftp1","id.orig_h":"192.168.4.76","id.orig_p":40100,"id.resp_h":"192.168.4.20","id.resp_p":21,"user":"anonymous","command":"RETR","arg":"ftp://192.168.4.20/pub/file.txt","reply_code":226,"reply_msg":"Transfer complete."}
+# --- smtp -> 4009 Email Activity ---
+{"_path":"smtp","ts":1591368004.10,"uid":"Csmtp1","id.orig_h":"192.168.4.76","id.orig_p":40200,"id.resp_h":"192.168.4.30","id.resp_p":25,"trans_depth":1,"mailfrom":"alice@example.com","rcptto":["bob@example.org"],"from":"Alice <alice@example.com>","to":["bob@example.org"],"subject":"Meeting notes","msg_id":"<abc123@example.com>"}
+# --- dhcp -> 4004 DHCP Activity (NO id.orig_h; client_addr/server_addr) ---
+{"_path":"dhcp","ts":1591368005.10,"uids":["Cdhcp1"],"client_addr":"192.168.4.100","server_addr":"192.168.4.1","mac":"00:0c:29:12:34:56","host_name":"laptop-01","assigned_addr":"192.168.4.100","lease_time":3600.0,"msg_types":["DISCOVER","OFFER","REQUEST","ACK"]}
+# --- ntp -> 4013 NTP Activity ---
+{"_path":"ntp","ts":1591368006.10,"uid":"Cntp1","id.orig_h":"192.168.4.76","id.orig_p":123,"id.resp_h":"192.168.4.1","id.resp_p":123,"version":4,"mode":3,"stratum":2,"poll":6.0,"precision":-23.0}
+# --- rdp -> 4005 RDP Activity ---
+{"_path":"rdp","ts":1591368007.10,"uid":"Crdp1","id.orig_h":"192.168.4.76","id.orig_p":50100,"id.resp_h":"192.168.4.40","id.resp_p":3389,"cookie":"user01","result":"encrypted","security_protocol":"HYBRID","desktop_width":1920,"desktop_height":1080}
+# --- smb_mapping -> 4006 SMB Activity ---
+{"_path":"smb_mapping","ts":1591368008.10,"uid":"Csmb1","id.orig_h":"192.168.4.76","id.orig_p":50200,"id.resp_h":"192.168.4.50","id.resp_p":445,"path":"\\\\192.168.4.50\\IPC$","service":"IPC","share_type":"PIPE"}
+# --- files -> 4010 Network File Activity (NO id.orig_h; tx_hosts/rx_hosts) ---
+{"_path":"files","ts":1591368009.10,"fuid":"FfileAAA","tx_hosts":["93.184.216.34"],"rx_hosts":["192.168.4.76"],"conn_uids":["C5bLoe2Mvxqhawzqqd"],"source":"HTTP","depth":0,"analyzers":["MD5","SHA1"],"mime_type":"text/html","filename":"index.html","duration":0.0,"seen_bytes":1256,"total_bytes":1256,"md5":"e1c06d85ae7b8b032bef47e42e4c08f9","sha1":"da39a3ee5e6b4b0d3255bfef95601890afd80709"}
+# --- tunnel -> 4014 Tunnel Activity ---
+{"_path":"tunnel","ts":1591368010.10,"uid":"Ctun1","id.orig_h":"192.168.4.76","id.orig_p":0,"id.resp_h":"8.8.8.8","id.resp_p":0,"tunnel_type":"Tunnel::GRE","action":"Tunnel::DISCOVER"}
+# --- kerberos -> 3002 Authentication ---
+{"_path":"kerberos","ts":1591368011.10,"uid":"Ckrb1","id.orig_h":"192.168.4.76","id.orig_p":50300,"id.resp_h":"192.168.4.60","id.resp_p":88,"request_type":"TGS","client":"alice/EXAMPLE.COM","service":"host/server.example.com","success":true,"cipher":"aes256-cts-hmac-sha1-96"}
+{"_path":"kerberos","ts":1591368011.80,"uid":"Ckrb2","id.orig_h":"192.168.4.76","id.orig_p":50305,"id.resp_h":"192.168.4.60","id.resp_p":88,"request_type":"AS","client":"mallory/EXAMPLE.COM","service":"krbtgt/EXAMPLE.COM","success":false,"error_msg":"KDC_ERR_PREAUTH_FAILED"}
+# --- weird -> 4001 Network Activity (protocol anomaly) ---
+{"_path":"weird","ts":1591368012.10,"uid":"Cweird1","id.orig_h":"192.168.4.76","id.orig_p":41000,"id.resp_h":"192.168.4.1","id.resp_p":80,"name":"unescaped_special_URI_char","notice":false,"peer":"worker-1-1"}
+# --- notice -> 2004 Detection Finding ---
+{"_path":"notice","ts":1591368013.10,"uid":"Cnotice1","id.orig_h":"203.0.113.9","id.orig_p":52999,"id.resp_h":"192.168.4.1","id.resp_p":22,"note":"SSH::Password_Guessing","msg":"203.0.113.9 appears to be guessing SSH passwords","sub":"Sampled 30 apparent failures","src":"203.0.113.9","dst":"192.168.4.1","actions":["Notice::ACTION_LOG"]}

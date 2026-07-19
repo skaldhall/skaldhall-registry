@@ -1,17 +1,50 @@
 #!/bin/bash
 # Validate a candidate VRL against its samples file.
-# Usage: validate.sh <source-id> <samples-file> <vrl-file>
+# Usage: validate.sh <source-id> <samples-file> <vrl-file-or-pipeline-yaml>
 # Exits 0 if every sample produced an output record AND none of those
 # records contains an `unmapped` key. Exits non-zero otherwise.
+#
+# The third argument may be EITHER a bare .vrl file or a pipelines/<src>.yaml
+# (CONTRIBUTING.md documents both). A .yaml has its `vrl:` field extracted
+# first — inlining the whole YAML as VRL is what used to happen, and it failed
+# with a pile of `unexpected syntax token: "Colon"` errors pointing at the
+# YAML's own `key: value` lines, which reads like a broken VRL rather than the
+# wrong input type.
 set -e
 
 SRC=${1:?source-id}
 SAMPLES=${2:?samples-file}
-VRL=${3:?vrl-file}
+VRL_IN=${3:?vrl-file-or-pipeline-yaml}
 
-VECTOR=${VECTOR:-/home/jradikk/OpenSIEM/bin/vector}
+# Default to the sibling bragi checkout's vendored binary; override with
+# VECTOR=<path>. (This used to hardcode one contributor's home directory.)
+VECTOR=${VECTOR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/../bragi/bin/vector}
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
+
+if [ ! -x "$VECTOR" ]; then
+  echo "FAIL($SRC): vector binary not found at '$VECTOR'"
+  echo "  Set VECTOR=/path/to/vector (the bragi repo vendors one via 'make vector-toolchain')."
+  exit 2
+fi
+
+# Accept a pipeline YAML by extracting its vrl: field.
+case "$VRL_IN" in
+  *.yaml|*.yml)
+    VRL="$TMP/extracted.vrl"
+    python3 -c "
+import sys, yaml
+d = yaml.safe_load(open('$VRL_IN'))
+v = (d or {}).get('vrl')
+if not v:
+    sys.exit('no vrl: field in $VRL_IN')
+open('$VRL','w').write(v)
+" || { echo "FAIL($SRC): could not extract vrl: from $VRL_IN"; exit 2; }
+    ;;
+  *)
+    VRL="$VRL_IN"
+    ;;
+esac
 
 # Strip leading `# source: ...` comments from the samples file.
 grep -v '^#' "$SAMPLES" | grep -v '^$' > "$TMP/in.txt" || true
