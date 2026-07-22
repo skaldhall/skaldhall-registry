@@ -76,6 +76,14 @@ vrl: |
       }
     }
 
+    # Impersonation (kubectl --as / Impersonate-User header). Only present when a
+    # principal acted as another identity; surfaced flat so the api-impersonation
+    # Sigma rule can match on its presence. The REAL caller stays in actor.user.
+    if is_object(parsed.impersonatedUser) {
+      imp = object!(parsed.impersonatedUser)
+      .actor.impersonated_user = imp.username
+    }
+
     .http_request = {
       "url": {"path": parsed.requestURI},
       "user_agent": parsed.userAgent
