@@ -1,0 +1,15 @@
+# source: cloudflared (Cloudflare Tunnel) run with --loglevel debug
+# NOTE: cloudflared logs each proxied call as a REQUEST line and a separate
+# RESPONSE line. The parser emits an event for every request line and for
+# error responses (HTTP >= 400) only; 2xx/3xx responses and operational
+# (startup/health) lines are intentionally dropped. validate.sh asserts every
+# sample produces a record, so only those two record-producing line shapes
+# appear below.
+2026-07-23T12:44:42Z DBG GET https://example.info/s HTTP/1.1 connIndex=0 content-length=0 event=1 headers={"Accept":["text/html"],"Cf-Connecting-Ip":["95.67.17.210"],"Cf-Ipcountry":["UA"],"Cf-Ray":["a1fac72a5ed0a541-VIE"],"User-Agent":["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"]} host=example.info ingressRule=0 originService=http://127.0.0.1:4000 path=/s
+2026-07-23T12:45:01Z DBG POST https://app.example.com/login HTTP/1.1 connIndex=1 content-length=64 event=1 headers={"Cf-Connecting-Ip":["203.0.113.7"],"Cf-Ipcountry":["US"],"Cf-Ray":["b2ebd83b6fe1b652-IAD"],"Content-Type":["application/x-www-form-urlencoded"],"User-Agent":["curl/8.4.0"]} host=app.example.com ingressRule=0 originService=http://127.0.0.1:8080 path=/login
+2026-07-23T12:45:14Z DBG GET https://app.example.com/admin/config HTTP/1.1 connIndex=2 content-length=0 event=1 headers={"Cf-Connecting-Ip":["198.51.100.23"],"Cf-Ipcountry":["DE"],"Cf-Ray":["c3fce94c70f2c763-FRA"],"User-Agent":["python-requests/2.31.0"]} host=app.example.com ingressRule=0 originService=http://127.0.0.1:8080 path=/admin/config
+2026-07-23T12:45:15Z DBG 401 Unauthorized connIndex=2 content-length=-1 event=1 ingressRule=0 originService=http://127.0.0.1:8080
+2026-07-23T12:45:16Z DBG 403 Forbidden connIndex=2 content-length=-1 event=1 ingressRule=0 originService=http://127.0.0.1:8080
+2026-07-23T12:45:20Z DBG 429 Too Many Requests connIndex=1 content-length=-1 event=1 ingressRule=0 originService=http://127.0.0.1:8080
+2026-07-23T12:45:33Z DBG 500 Internal Server Error connIndex=0 content-length=-1 event=1 ingressRule=0 originService=http://127.0.0.1:4000
+2026-07-23T12:45:41Z DBG 502 Bad Gateway connIndex=0 content-length=-1 event=1 ingressRule=0 originService=http://127.0.0.1:4000

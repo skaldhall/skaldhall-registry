@@ -28,6 +28,7 @@ and uses the registry VRL directly (`reason=Registry`, `confidence=1.0`).
 | calico-felix | 6008 | regex | Calico Felix log |
 | calico-flow | 4001 | json | Calico flow logs |
 | certmanager | 6002 | json | cert-manager controller log (zap) |
+| cloudflared | 4002 | regex | Cloudflare Tunnel (cloudflared) HTTP request/response debug logs |
 | coraza | 2004 | json | Coraza WAF audit JSON |
 | cosign-verify | 2004 | json | Sigstore cosign verify log |
 | crowdsec | 2004 | json | CrowdSec alerts/decisions |

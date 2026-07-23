@@ -1,0 +1,94 @@
+# Cloudflare Tunnel (cloudflared) request/response DEBUG logs -> OCSF 4002 HTTP Activity
+#
+# cloudflared at --loglevel debug logs each proxied request as TWO lines:
+#   REQUEST  : "<ts> DBG GET https://host/path HTTP/1.1 ... headers={...} host=.. path=.."
+#   RESPONSE : "<ts> DBG 200 OK connIndex=0 event=1 ... originService=.."
+# There is NO per-request id shared by both lines (Cf-Ray is request-only;
+# connIndex/event are low-cardinality), so they can't be reliably merged. Dual
+# emit instead:
+#   - the REQUEST line -> a full HTTP event with the real client IP
+#     (Cf-Connecting-Ip), country (Cf-Ipcountry), method, path, host, UA. This
+#     is what the world map and event views show (inbound traffic).
+#   - the RESPONSE line -> emitted ONLY for error status (>= 400), carrying the
+#     status code, so the 401/403/5xx Sigma rules have something to fire on.
+#     2xx/3xx responses are dropped (the request event already covers them).
+# Every other cloudflared line (startup/health/operational) is dropped.
+sourceId: "cloudflared"
+fingerprint: ""           # wildcard — any fingerprint for this sourceId
+family: "regex"
+ocsfClass: 4002
+emits: [4002]
+description: "Cloudflare Tunnel (cloudflared) HTTP request/response debug logs -> OCSF HTTP Activity"
+sample: '2026-07-23T12:44:42Z DBG GET https://example.info/s HTTP/1.1 connIndex=0 content-length=0 event=1 headers={"Accept":["text/html"],"Cf-Connecting-Ip":["95.67.17.210"],"Cf-Ipcountry":["UA"],"Cf-Ray":["a1fac72a5ed0a541-VIE"],"User-Agent":["Mozilla/5.0"]} host=example.info ingressRule=0 originService=http://127.0.0.1:4000 path=/s'
+vrl: |
+    src = .
+    msg = to_string(.message) ?? ""
+    . = {}
+    .class_uid = 4002
+    .metadata = {"product": {"name": "cloudflared", "vendor_name": "Cloudflare"}, "version": "1.5.0", "log_name": "cloudflare-tunnel"}
+
+    # Log-line timestamp (RFC3339 at the start); fall back to ingest time.
+    tsm = parse_regex(msg, r'^(?P<ts>\S+)\s') ?? {}
+    pt, perr = parse_timestamp(to_string(tsm.ts), "%+")
+    if perr == null {
+      .time = pt
+    } else {
+      ft = src.timestamp
+      if ft == null { ft = now() }
+      .time = ft
+    }
+
+    # Classify: a REQUEST line has "<METHOD> https://…"; a RESPONSE line has
+    # "DBG <status> …". These patterns never cross-match.
+    reqm  = parse_regex(msg, r'\s(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\s+https?://') ?? {}
+    respm = parse_regex(msg, r'\sDBG\s+(?P<status>[1-5]\d\d)\s') ?? {}
+
+    if exists(reqm.method) {
+      method = upcase(to_string(reqm.method))
+      # activity_id per the OCSF 4002 catalog (NOT the HTTP verb order):
+      # Connect=1, Delete=2, Get=3, Head=4, Options=5, Post=6, Put=7, Trace=8, Patch=9.
+      .activity_id = 0
+      if method == "CONNECT" { .activity_id = 1 }
+      if method == "DELETE"  { .activity_id = 2 }
+      if method == "GET"     { .activity_id = 3 }
+      if method == "HEAD"    { .activity_id = 4 }
+      if method == "OPTIONS" { .activity_id = 5 }
+      if method == "POST"    { .activity_id = 6 }
+      if method == "PUT"     { .activity_id = 7 }
+      if method == "TRACE"   { .activity_id = 8 }
+      if method == "PATCH"   { .activity_id = 9 }
+
+      ipm   = parse_regex(msg, r'"Cf-Connecting-Ip":\["(?P<v>[^"]+)"\]') ?? {}
+      ccm   = parse_regex(msg, r'"Cf-Ipcountry":\["(?P<v>[^"]+)"\]') ?? {}
+      uam   = parse_regex(msg, r'"User-Agent":\["(?P<v>[^"]*)"\]') ?? {}
+      raym  = parse_regex(msg, r'"Cf-Ray":\["(?P<v>[^"]+)"\]') ?? {}
+      hostm = parse_regex(msg, r'\shost=(?P<v>\S+)') ?? {}
+      pathm = parse_regex(msg, r'\spath=(?P<v>\S+)') ?? {}
+
+      .src_endpoint = {"ip": to_string(ipm.v)}
+      if exists(ccm.v) { .src_endpoint.location = {"country": to_string(ccm.v)} }
+      .http_request = {
+        "http_method": method,
+        "url": {"path": to_string(pathm.v), "hostname": to_string(hostm.v)},
+        "user_agent": to_string(uam.v)
+      }
+      # Inbound: an external client reaching the tunnelled service.
+      .connection_info = {"direction": "Inbound", "direction_id": 1}
+      .severity_id = 1
+      if exists(raym.v) { .metadata.uid = to_string(raym.v) }
+    } else if exists(respm.status) {
+      status = to_int(respm.status) ?? 0
+      # Only error responses are worth a standalone event — 2xx/3xx are covered
+      # by the request event and would just double the volume.
+      if status < 400 { abort }
+      .status_code = status
+      .http_response = {"code": status}
+      sev = 3
+      if status >= 500 { sev = 4 }
+      .severity_id = sev
+      .activity_id = 0
+      .connection_info = {"direction": "Inbound", "direction_id": 1}
+    } else {
+      abort
+    }
+    .raw_data = src.message
