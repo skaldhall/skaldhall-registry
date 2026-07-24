@@ -560,6 +560,11 @@ pipelines:
       } else {
         abort
       }
+      # Every event needs a stable, unique metadata.uid — the UI fetches an event's
+      # detail by it, so an event without one can't be opened ("id is required").
+      # Requests carry Cf-Ray; responses (and any Cf-Ray-less request) get a
+      # deterministic content hash (also gives correct at-least-once dedup).
+      if !exists(.metadata.uid) { .metadata.uid = md5(msg) }
       .raw_data = src.message
   - sourceId: "coraza"
     fingerprint: ""
