@@ -26,7 +26,7 @@ import yaml
 # not copied into the index; everything else here is read by the operator
 # (see registry.Entry in services/operator/internal/registry/registry.go).
 FIELDS = {"sourceId", "fingerprint", "family", "ocsfClass", "emits",
-          "classByKey", "description", "vrl", "sample"}
+          "classByKey", "reduce", "description", "vrl", "sample"}
 
 entries = []
 unknown = []
@@ -70,6 +70,12 @@ for e in entries:
         parts.append(f"    emits: {json.dumps([int(c) for c in e['emits']])}")
     if e.get('classByKey'):
         parts.append(f"    classByKey: {json.dumps({str(k): int(v) for k, v in e['classByKey'].items()})}")
+    if e.get('reduce'):
+        # Stateful pair-merging spec, rendered by the operator as a Vector
+        # `reduce` transform between parse and route (cloudflared pairs its
+        # request/response lines this way). Compact JSON keeps the index
+        # single-line-per-key like every other optional field.
+        parts.append(f"    reduce: {json.dumps(e['reduce'])}")
     parts.append(f"    description: {yamlify(e.get('description',''))}")
     vrl = e['vrl']
     if not vrl.endswith('\n'):

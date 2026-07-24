@@ -488,7 +488,8 @@ pipelines:
     family: "regex"
     ocsfClass: 4002
     emits: [4002]
-    description: "Cloudflare Tunnel (cloudflared) HTTP request/response debug logs -> OCSF HTTP Activity"
+    reduce: {"group_by": ["connection_info.uid"], "starts_when": "exists(.http_request.http_method)", "expire_after_ms": 3000, "merge_strategies": {"severity_id": "max", "class_uid": "discard", "activity_id": "discard", "status_code": "max", "raw_data": "concat_newline", "connection_info.direction_id": "discard"}}
+    description: "Cloudflare Tunnel (cloudflared) HTTP request/response debug logs -> OCSF HTTP Activity (request+response merged per call)"
     vrl: |
       src = .
       msg = to_string(.message) ?? ""
@@ -511,6 +512,12 @@ pipelines:
       # "DBG <status> …". These patterns never cross-match.
       reqm  = parse_regex(msg, r'\s(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\s+https?://') ?? {}
       respm = parse_regex(msg, r'\sDBG\s+(?P<status>[1-5]\d\d)\s') ?? {}
+
+      # Tunnel connection id — the reduce stage groups request/response pairs on
+      # it (OCSF connection_info.uid). Both line kinds carry connIndex=N.
+      connm = parse_regex(msg, r'\sconnIndex=(?P<v>\d+)') ?? {}
+      conn_uid = "0"
+      if exists(connm.v) { conn_uid = to_string(connm.v) }
 
       if exists(reqm.method) {
         method = upcase(to_string(reqm.method))
@@ -542,7 +549,7 @@ pipelines:
           "user_agent": to_string(uam.v)
         }
         # Inbound: an external client reaching the tunnelled service.
-        .connection_info = {"direction": "Inbound", "direction_id": 1}
+        .connection_info = {"direction": "Inbound", "direction_id": 1, "uid": conn_uid}
         .severity_id = 1
         if exists(raym.v) { .metadata.uid = to_string(raym.v) }
       } else if exists(respm.status) {
@@ -557,7 +564,7 @@ pipelines:
         if status >= 500 { sev = 4 }
         .severity_id = sev
         .activity_id = 0
-        .connection_info = {"direction": "Inbound", "direction_id": 1}
+        .connection_info = {"direction": "Inbound", "direction_id": 1, "uid": conn_uid}
       } else {
         abort
       }
