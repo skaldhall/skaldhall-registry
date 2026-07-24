@@ -547,12 +547,13 @@ pipelines:
         if exists(raym.v) { .metadata.uid = to_string(raym.v) }
       } else if exists(respm.status) {
         status = to_int(respm.status) ?? 0
-        # Only error responses are worth a standalone event — 2xx/3xx are covered
-        # by the request event and would just double the volume.
-        if status < 400 { abort }
+        # EVERY response becomes an event — the status code is the half of the
+        # telemetry the request line cannot carry. 2xx/3xx are info; errors are
+        # elevated so the 401/403/429/5xx rules ride on severity-worthy events.
         .status_code = status
         .http_response = {"code": status}
-        sev = 3
+        sev = 1
+        if status >= 400 { sev = 3 }
         if status >= 500 { sev = 4 }
         .severity_id = sev
         .activity_id = 0
@@ -562,9 +563,14 @@ pipelines:
       }
       # Every event needs a stable, unique metadata.uid — the UI fetches an event's
       # detail by it, so an event without one can't be opened ("id is required").
-      # Requests carry Cf-Ray; responses (and any Cf-Ray-less request) get a
-      # deterministic content hash (also gives correct at-least-once dedup).
-      if !exists(.metadata.uid) { .metadata.uid = md5(msg) }
+      # Requests carry Cf-Ray; responses (and any Cf-Ray-less request) hash the
+      # line PLUS the envelope's tail-time observed_at: two identical lines in the
+      # same second (repeat 200s on a busy host) stay distinct events, while a
+      # JetStream redelivery of the same envelope hashes identically (dedup-safe).
+      if !exists(.metadata.uid) {
+        ots = to_string(src.observed_at) ?? ""
+        .metadata.uid = md5(msg + ots)
+      }
       .raw_data = src.message
   - sourceId: "coraza"
     fingerprint: ""
