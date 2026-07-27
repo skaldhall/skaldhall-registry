@@ -4,10 +4,10 @@
 #   REQUEST  : "<ts> DBG GET https://host/path HTTP/1.1 ... headers={...} host=.. path=.."
 #   RESPONSE : "<ts> DBG 200 OK connIndex=0 event=1 ... originService=.."
 # There is NO per-request id shared by both lines (Cf-Ray is request-only), so
-# the VRL parses each line into its half of the event — request lines carry the
-# client IP (Cf-Connecting-Ip), country, method, path, host, UA; response lines
-# carry the status (2xx/3xx info, 4xx medium, 5xx high) — and the pipeline's
-# `reduce:` stage below MERGES the pair into ONE stored event per call.
+# the edge joins each pair into ONE two-line message (see merge_lines below)
+# and the VRL parses BOTH halves out of it: request line -> client IP
+# (Cf-Connecting-Ip), country, method, path, host, UA; response line -> the
+# status (2xx/3xx info, 4xx medium, 5xx high). One stored event per HTTP call.
 # Unpaired halves (missed line, tunnel restart) still surface alone, so the
 # 401/403/429/5xx Sigma rules always have a status-bearing event to fire on.
 # Every other cloudflared line (startup/health/operational) is dropped.
@@ -16,27 +16,20 @@ fingerprint: ""           # wildcard — any fingerprint for this sourceId
 family: "regex"
 ocsfClass: 4002
 emits: [4002]
-# Merge the request/response line pair into ONE stored event. cloudflared gives
-# the two lines no shared id, so the pipeline pairs them statefully instead:
-# group by the tunnel connection (connection_info.uid = connIndex), a request
-# line opens a group (starts_when), the following response on that connection
-# merges into it, and unpaired halves flush alone after expire_after_ms.
-# Under parallel in-flight requests on one connection (HTTP/2 multiplexing)
-# a status can attach to the adjacent request — approximate by construction,
-# exact whenever requests are sequential. merge_strategies pin the fields both
-# halves carry (numbers otherwise SUM across the pair); severity takes the max
-# so an error response elevates the merged event; raw_data keeps both lines.
-reduce:
-  group_by: ["connection_info.uid"]
-  starts_when: "exists(.http_request.http_method)"
+# Join the request/response line pair into ONE message AT THE EDGE — inside
+# the Vector instance that tails the cloudflared pod, where that pod's lines
+# arrive strictly in file order. (A pipeline-level merge was tried first and
+# is wrong by construction: the pipeline DaemonSet shares one JetStream
+# consumer, so a pair's two lines land on different Vector pods whose reduce
+# states never meet — and connIndex isn't unique across pods.) The edge
+# groups DBG lines per (pod, connIndex); a request line opens the pair, the
+# following response line joins it, unpaired halves flush alone after
+# expire_after_ms. The VRL below then parses BOTH lines out of one message.
+merge_lines:
+  when_regex: '\sDBG\s'
+  key_regex: 'connIndex=(?P<key>\d+)'
+  starts_when_regex: '\s(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\s+https?://'
   expire_after_ms: 3000
-  merge_strategies:
-    severity_id: max
-    class_uid: discard
-    activity_id: discard
-    status_code: max
-    raw_data: concat_newline
-    connection_info.direction_id: discard
 description: "Cloudflare Tunnel (cloudflared) HTTP request/response debug logs -> OCSF HTTP Activity (request+response merged per call)"
 sample: '2026-07-23T12:44:42Z DBG GET https://example.info/s HTTP/1.1 connIndex=0 content-length=0 event=1 headers={"Accept":["text/html"],"Cf-Connecting-Ip":["95.67.17.210"],"Cf-Ipcountry":["UA"],"Cf-Ray":["a1fac72a5ed0a541-VIE"],"User-Agent":["Mozilla/5.0"]} host=example.info ingressRule=0 originService=http://127.0.0.1:4000 path=/s'
 vrl: |
@@ -101,6 +94,16 @@ vrl: |
       .connection_info = {"direction": "Inbound", "direction_id": 1, "uid": conn_uid}
       .severity_id = 1
       if exists(raym.v) { .metadata.uid = to_string(raym.v) }
+      # Edge-joined message: the response line rides in the same .message, so
+      # this event carries the status too — one event per HTTP call. Severity
+      # follows the status (errors elevate the merged event).
+      if exists(respm.status) {
+        status = to_int(respm.status) ?? 0
+        .status_code = status
+        .http_response = {"code": status}
+        if status >= 400 { .severity_id = 3 }
+        if status >= 500 { .severity_id = 4 }
+      }
     } else if exists(respm.status) {
       status = to_int(respm.status) ?? 0
       # EVERY response becomes an event — the status code is the half of the

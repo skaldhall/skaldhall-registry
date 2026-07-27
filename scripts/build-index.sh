@@ -26,7 +26,7 @@ import yaml
 # not copied into the index; everything else here is read by the operator
 # (see registry.Entry in services/operator/internal/registry/registry.go).
 FIELDS = {"sourceId", "fingerprint", "family", "ocsfClass", "emits",
-          "classByKey", "reduce", "description", "vrl", "sample"}
+          "classByKey", "reduce", "merge_lines", "description", "vrl", "sample"}
 
 entries = []
 unknown = []
@@ -70,6 +70,11 @@ for e in entries:
         parts.append(f"    emits: {json.dumps([int(c) for c in e['emits']])}")
     if e.get('classByKey'):
         parts.append(f"    classByKey: {json.dumps({str(k): int(v) for k, v in e['classByKey'].items()})}")
+    if e.get('merge_lines'):
+        # Edge-level line pairing: rendered into the LogSource INPUT fragment
+        # (the Vector that tails the pod), where a pod's lines arrive strictly
+        # in order — the only place pairing is correct on multi-node clusters.
+        parts.append(f"    merge_lines: {json.dumps(e['merge_lines'])}")
     if e.get('reduce'):
         # Stateful pair-merging spec, rendered by the operator as a Vector
         # `reduce` transform between parse and route (cloudflared pairs its

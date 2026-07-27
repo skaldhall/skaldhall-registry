@@ -488,7 +488,7 @@ pipelines:
     family: "regex"
     ocsfClass: 4002
     emits: [4002]
-    reduce: {"group_by": ["connection_info.uid"], "starts_when": "exists(.http_request.http_method)", "expire_after_ms": 3000, "merge_strategies": {"severity_id": "max", "class_uid": "discard", "activity_id": "discard", "status_code": "max", "raw_data": "concat_newline", "connection_info.direction_id": "discard"}}
+    merge_lines: {"when_regex": "\\sDBG\\s", "key_regex": "connIndex=(?P<key>\\d+)", "starts_when_regex": "\\s(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\\s+https?://", "expire_after_ms": 3000}
     description: "Cloudflare Tunnel (cloudflared) HTTP request/response debug logs -> OCSF HTTP Activity (request+response merged per call)"
     vrl: |
       src = .
@@ -552,6 +552,16 @@ pipelines:
         .connection_info = {"direction": "Inbound", "direction_id": 1, "uid": conn_uid}
         .severity_id = 1
         if exists(raym.v) { .metadata.uid = to_string(raym.v) }
+        # Edge-joined message: the response line rides in the same .message, so
+        # this event carries the status too — one event per HTTP call. Severity
+        # follows the status (errors elevate the merged event).
+        if exists(respm.status) {
+          status = to_int(respm.status) ?? 0
+          .status_code = status
+          .http_response = {"code": status}
+          if status >= 400 { .severity_id = 3 }
+          if status >= 500 { .severity_id = 4 }
+        }
       } else if exists(respm.status) {
         status = to_int(respm.status) ?? 0
         # EVERY response becomes an event — the status code is the half of the
