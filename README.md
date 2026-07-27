@@ -18,7 +18,7 @@ and uses the registry VRL directly (`reason=Registry`, `confidence=1.0`).
 | `scripts/validate.sh` | Validation harness. Runs Vector against samples + a candidate VRL and asserts: every input → an output record, no `unmapped` key, all of `class_uid|time|severity_id|metadata` present. |
 | `scripts/build-index.sh` | Regenerates `index.yaml` from `pipelines/*.yaml`. |
 
-## Pipelines (58)
+## Pipelines (59)
 
 | sourceId | OCSF | family | description |
 |---|---|---|---|
@@ -93,7 +93,7 @@ helm install bragi oci://ghcr.io/skaldhall/bragi/charts/bragi \
   --namespace siem --create-namespace \
   --set openai.existingSecret=bragi-openai \
   --set opensearch.url=https://os.example.com:9200 \
-  --set operator.registryUrl=https://raw.githubusercontent.com/skaldhall/registry/main/index.yaml
+  --set operator.registryUrl=https://raw.githubusercontent.com/skaldhall/skaldhall-registry/main/index.yaml
 ```
 
 ## How the lookup works
@@ -133,3 +133,27 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) and [SCHEMA.md](./SCHEMA.md).
 ## License
 
 (TBD before public release.)
+
+## Releasing
+
+No tags, no versions — **push to `main`**:
+
+```bash
+bash scripts/validate.sh <src> samples/<src>.txt pipelines/<src>.yaml   # per entry
+bash scripts/check-all.sh                                              # everything
+bash scripts/build-index.sh                                            # regenerate index.yaml
+git commit -am "…" && git push origin main
+```
+
+Clusters with egress pick the new `index.yaml` up within the operator's 5-minute
+cache TTL. **Air-gapped clusters read an embedded copy**, so an entry is not
+fully shipped until it is vendored into the operator image:
+
+```bash
+cd ~/bragi && make registry-embed && git commit -am "…"   # then a bragi release
+```
+
+Adding a new top-level entry field is **three** changes: the pipeline YAML, the
+`FIELDS` allow-list + emit block in `scripts/build-index.sh`, and
+`registry.Entry` in the operator. Miss the middle one and the field is silently
+dropped from `index.yaml`.

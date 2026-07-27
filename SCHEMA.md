@@ -8,10 +8,65 @@ pipelines:
     fingerprint: <string>       # optional. Empty = wildcard for the source.
     family: <string>            # optional. One of: json, klog, kv, regex.
                                 # Used by the operator's family fallback.
-    ocsfClass: <int>            # required. OCSF class_uid the VRL emits.
+    ocsfClass: <int>            # required. The PRIMARY class — pipeline identity
+                                # and default index. Advisory: routing uses the
+                                # class_uid the VRL actually sets per record.
+    emits: [<int>, ...]         # optional. EVERY class the VRL can emit; drives
+                                # index-template pre-creation. Empty = [ocsfClass].
+    classByKey: {<str>: <int>}  # optional, legacy. Wrapper-key -> class.
+    reduce: {...}               # optional. Stateful event merging (see below).
+    merge_lines: {...}          # optional. Raw-line pairing at the edge (below).
     description: <string>       # optional. Human-readable summary.
     vrl: |                      # required. Vector Remap Language program.
       <multi-line VRL>
+```
+
+> **Adding a new top-level field is TWO changes.** `scripts/build-index.sh` has
+> a `FIELDS` allow-list and copies only what it knows; a field missing from it
+> is silently dropped from `index.yaml` and the operator never sees it (this is
+> how `emits` was lost once). Add it to `FIELDS`, to the emit block below it,
+> **and** to `registry.Entry` in the operator.
+
+### `merge_lines` — pairing raw lines at the edge
+
+For sources that split one logical event across consecutive lines (cloudflared
+logs a request line and its response line, with no shared id). Rendered by the
+operator into the **LogSource input fragment** — the Vector instance tailing the
+pod — where that pod's lines arrive in file order:
+
+```yaml
+merge_lines:
+  when_regex: '\sDBG\s'                    # optional gate: which lines pair at all
+  key_regex: 'connIndex=(?P<key>\d+)'       # required: named group `key` = group id
+  starts_when_regex: '\s(GET|POST)\s+https?://'   # the line that OPENS a pair
+  expire_after_ms: 3000                     # unpaired halves flush alone after this
+```
+
+Joined lines arrive at the VRL as ONE `.message` separated by newlines, so the
+parser must handle both halves in a single pass. Grouping is per `(pod, key)`.
+
+> **Why the edge, not the pipeline.** The pipeline DaemonSet shares one
+> JetStream consumer, so a pair's two lines land on *different* Vector pods
+> whose state never meets — and `connIndex`-style ids are not unique across
+> pods. Pipeline-level merging looks fine on a single-node dev cluster and
+> merges nothing in production.
+
+### `reduce` — stateful merging in the pipeline
+
+Vector `reduce` options passed through verbatim (`group_by`, `starts_when`,
+`ends_when`, `expire_after_ms`, `merge_strategies`), applied to **parsed events**
+between parse and route. Only sound when a single consumer sees every related
+event — for per-pod line pairing use `merge_lines` instead.
+
+```yaml
+reduce:
+  group_by: ["connection_info.uid"]
+  starts_when: "exists(.http_request.http_method)"
+  expire_after_ms: 3000
+  merge_strategies:
+    severity_id: max            # numbers otherwise SUM across merged events
+    class_uid: discard
+    raw_data: concat_newline
 ```
 
 The operator fetches `index.yaml`, caches it for 5 minutes, and on every new
@@ -75,7 +130,7 @@ parsed = parse_json(.message) ?? {}
 | 6008 | Application Error | apiserver-server, kubelet, journald, Pixie, Felix |
 | 7001 | Entity Management | k8s events, External Secrets |
 
-## VRL gotchas (Vector 0.38)
+## VRL gotchas (Vector 0.50 — vendored at `~/bragi/bin/vector`)
 
 - `to_string(x) ?? ""` errors with E651 when `x` is statically known.
   Use `string(x) ?? ""` (the type-asserter) instead, or skip `??` entirely.

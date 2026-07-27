@@ -56,7 +56,7 @@
    - every output has `class_uid`, `time`, `severity_id`, `metadata`.
 
    It needs the Vector binary on PATH or at the path pointed to by the
-   `VECTOR` env var (defaults to `/home/jradikk/OpenSIEM/bin/vector` —
+   `VECTOR` env var (defaults to `~/bragi/bin/vector` —
    override with `export VECTOR=$(which vector)`).
 
 6. Regenerate `index.yaml`:
@@ -83,7 +83,7 @@ The registry only takes effect after the operator re-fetches
 `index.yaml` (5-minute TTL). To force a refresh, restart the operator:
 
 ```bash
-kubectl -n siem rollout restart deployment/bragi-operator
+kubectl -n <namespace> rollout restart deployment/bragi-operator   # securityhub in prod, bragi-dev locally
 ```
 
 To verify a draft was satisfied by the registry, look at its conditions:
@@ -92,3 +92,16 @@ To verify a draft was satisfied by the registry, look at its conditions:
 kubectl get parserdraft <name> -o jsonpath='{.status.conditions[?(@.type=="Generated")].reason}'
 # expected: Registry
 ```
+
+## Adding a new entry FIELD (not a new entry)
+
+Three changes, or the operator never sees it:
+
+1. the field in `pipelines/<src>.yaml`
+2. `scripts/build-index.sh` — add it to the `FIELDS` allow-list **and** to the
+   emit block (the script hard-errors on unknown keys, and silently omits any
+   field it doesn't explicitly copy)
+3. `registry.Entry` in `~/bragi/services/operator/internal/registry/registry.go`
+
+See `SCHEMA.md` for the current field list, including `emits`, `reduce` and
+`merge_lines`.
